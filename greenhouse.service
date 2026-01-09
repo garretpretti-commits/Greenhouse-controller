@@ -1,0 +1,17 @@
+[Unit]
+Description=Greenhouse Controller
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/websitephotos
+Environment="PATH=/home/pi/websitephotos/venv/bin"
+ExecStart=/home/pi/websitephotos/venv/bin/python3 /home/pi/websitephotos/backend/app.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

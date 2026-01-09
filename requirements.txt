@@ -1,0 +1,4 @@
+Flask==3.0.0
+Flask-CORS==4.0.0
+pyserial==3.5
+adafruit-circuitpython-dht==4.0.0
