@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Greenhouse Controller</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🌱 Greenhouse Controller</h1>
+            <div class="connection-status">
+                <span id="connectionStatus" class="status-indicator offline">●</span>
+                <span id="connectionText">Connecting...</span>
+            </div>
+        </header>
+
+        <!-- Current Readings Section -->
+        <section class="dashboard-grid">
+            <div class="card">
+                <div class="card-header">
+                    <h2>🌡️ Temperature</h2>
+                </div>
+                <div class="card-body">
+                    <div class="reading-value">
+                        <span id="tempValue" class="value">--</span>
+                        <span class="unit">°C</span>
+                    </div>
+                    <div class="reading-label">Current</div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <h2>💧 Humidity</h2>
+                </div>
+                <div class="card-body">
+                    <div class="reading-value">
+                        <span id="humidityValue" class="value">--</span>
+                        <span class="unit">%</span>
+                    </div>
+                    <div class="reading-label">Current</div>
+                </div>
+            </div>
+
+            <div class="card soil-card">
+                <div class="card-header">
+                    <h2>🌿 Soil Moisture</h2>
+                </div>
+                <div class="card-body">
+                    <div class="soil-grid">
+                        <div class="soil-reading">
+                            <div class="soil-label">Sensor 1</div>
+                            <div class="soil-value">
+                                <span id="soil1Value">--</span>%
+                            </div>
+                        </div>
+                        <div class="soil-reading">
+                            <div class="soil-label">Sensor 2</div>
+                            <div class="soil-value">
+                                <span id="soil2Value">--</span>%
+                            </div>
+                        </div>
+                        <div class="soil-reading">
+                            <div class="soil-label">Sensor 3</div>
+                            <div class="soil-value">
+                                <span id="soil3Value">--</span>%
+                            </div>
+                        </div>
+                        <div class="soil-reading">
+                            <div class="soil-label">Sensor 4</div>
+                            <div class="soil-value">
+                                <span id="soil4Value">--</span>%
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Climate Control Section -->
+        <section class="control-section">
+            <div class="card">
+                <div class="card-header">
+                    <h2>⚙️ Climate Control</h2>
+                    <div class="mode-toggle">
+                        <button id="manualModeBtn" class="mode-btn active">Manual</button>
+                        <button id="autoModeBtn" class="mode-btn">Auto</button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div id="manualControls" class="controls-grid">
+                        <div class="control-item">
+                            <label>
+                                <input type="checkbox" id="humidifierToggle" class="relay-toggle">
+                                <span class="control-label">💦 Humidifier</span>
+                            </label>
+                        </div>
+                        <div class="control-item">
+                            <label>
+                                <input type="checkbox" id="dehumidifierToggle" class="relay-toggle">
+                                <span class="control-label">🌬️ Dehumidifier</span>
+                            </label>
+                        </div>
+                        <div class="control-item">
+                            <label>
+                                <input type="checkbox" id="heaterToggle" class="relay-toggle">
+                                <span class="control-label">🔥 Heater</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div id="autoControls" class="auto-controls hidden">
+                        <div class="setting-group">
+                            <label>Target Temperature (°C)</label>
+                            <div class="input-group">
+                                <input type="number" id="targetTemp" step="0.5" value="22">
+                                <span>±</span>
+                                <input type="number" id="tempTolerance" step="0.1" value="1">
+                            </div>
+                        </div>
+                        <div class="setting-group">
+                            <label>Target Humidity (%)</label>
+                            <div class="input-group">
+                                <input type="number" id="targetHumidity" step="1" value="60">
+                                <span>±</span>
+                                <input type="number" id="humidityTolerance" step="1" value="5">
+                            </div>
+                        </div>
+                        <button id="saveSettingsBtn" class="btn btn-primary">Save Settings</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Light Control Section -->
+            <div class="card">
+                <div class="card-header">
+                    <h2>💡 Light Control</h2>
+                    <div class="mode-toggle">
+                        <button id="lightManualBtn" class="mode-btn active">Manual</button>
+                        <button id="lightScheduleBtn" class="mode-btn">Schedule</button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div id="lightManualControl" class="controls-grid">
+                        <div class="control-item">
+                            <label>
+                                <input type="checkbox" id="lightToggle" class="relay-toggle">
+                                <span class="control-label">💡 Grow Light</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div id="lightScheduleControl" class="auto-controls hidden">
+                        <div class="setting-group">
+                            <label>Light ON Time</label>
+                            <input type="time" id="lightOnTime" value="06:00">
+                        </div>
+                        <div class="setting-group">
+                            <label>Light OFF Time</label>
+                            <input type="time" id="lightOffTime" value="22:00">
+                        </div>
+                        <button id="saveLightScheduleBtn" class="btn btn-primary">Save Schedule</button>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Charts Section -->
+        <section class="charts-section">
+            <div class="card chart-card">
+                <div class="card-header">
+                    <h2>📊 Temperature & Humidity History</h2>
+                    <select id="timeRange" class="time-range-select">
+                        <option value="1">Last Hour</option>
+                        <option value="6">Last 6 Hours</option>
+                        <option value="24" selected>Last 24 Hours</option>
+                        <option value="72">Last 3 Days</option>
+                    </select>
+                </div>
+                <div class="card-body">
+                    <canvas id="climateChart"></canvas>
+                </div>
+            </div>
+
+            <div class="card chart-card">
+                <div class="card-header">
+                    <h2>🌿 Soil Moisture History</h2>
+                </div>
+                <div class="card-body">
+                    <canvas id="soilChart"></canvas>
+                </div>
+            </div>
+        </section>
+
+        <!-- Status Section -->
+        <section class="status-section">
+            <div class="card">
+                <div class="card-header">
+                    <h2>📋 System Status</h2>
+                </div>
+                <div class="card-body">
+                    <div class="status-grid">
+                        <div class="status-item">
+                            <span class="status-label">Board 1:</span>
+                            <span id="board1Status" class="status-value">--</span>
+                        </div>
+                        <div class="status-item">
+                            <span class="status-label">Last Update:</span>
+                            <span id="lastUpdate" class="status-value">--</span>
+                        </div>
+                        <div class="status-item">
+                            <span class="status-label">Climate Mode:</span>
+                            <span id="climateModeStatus" class="status-value">--</span>
+                        </div>
+                        <div class="status-item">
+                            <span class="status-label">Light Mode:</span>
+                            <span id="lightModeStatus" class="status-value">--</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <script src="/static/js/dashboard.js"></script>
+</body>
+</html>

@@ -21,6 +21,28 @@
                     // Update humidity
                     document.getElementById('humidityValue').textContent = data.humidity.toFixed(0) + '%';
                     
+                    // Update soil moisture with disconnected sensor detection
+                    if (data.soil_moisture) {
+                        for (let i = 1; i <= 4; i++) {
+                            const soilValue = data.soil_moisture['soil' + i];
+                            if (soilValue !== undefined) {
+                                const elem = document.getElementById('soil' + i + 'Value');
+                                if (elem) {
+                                    // Detect likely disconnected sensor (reads very low or very high)
+                                    if (soilValue <= 2 || soilValue >= 95) {
+                                        elem.textContent = '—';
+                                        elem.title = 'Sensor disconnected';
+                                        elem.style.opacity = '0.4';
+                                    } else {
+                                        elem.textContent = soilValue.toFixed(1) + '%';
+                                        elem.title = '';
+                                        elem.style.opacity = '1';
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
                     // Update target displays
                     fetch('/api/climate/settings')
                         .then(r => r.json())
@@ -84,7 +106,7 @@
                             // Prepare data
                             const labels = data.map(d => {
                                 const date = new Date(d.timestamp * 1000);
-                                return date.toLocaleTimeString('en-US', {hour: 'numeric', minute: '2-digit'});
+                                return date.toLocaleTimeString('en-US', {hour: 'numeric'});
                             });
                             const temps = data.map(d => d.temperature * 9/5 + 32);
                             const humidities = data.map(d => d.humidity);
@@ -144,19 +166,424 @@
                 .catch(error => console.error('Chart error:', error));
         }
         
+        function updateSoilChart() {
+            fetch('/api/sensors/history?hours=48')
+                .then(response => response.json())
+                .then(data => {
+                    if (data && data.length > 0) {
+                        const canvas = document.getElementById('soilChart');
+                        if (!canvas) {
+                            // Create canvas if it doesn't exist
+                            const container = document.getElementById('soilChartContainer');
+                            if (container) {
+                                container.innerHTML = '<canvas id="soilChart"></canvas>';
+                            }
+                            return updateSoilChart(); // Retry after creating canvas
+                        }
+                        
+                        if (typeof Chart !== 'undefined') {
+                            const ctx = canvas.getContext('2d');
+                            
+                            // Prepare data
+                            const labels = data.map(d => {
+                                const date = new Date(d.timestamp * 1000);
+                                return date.toLocaleTimeString('en-US', {hour: 'numeric'});
+                            });
+                            const soil1 = data.map(d => d.soil1 || null);
+                            const soil2 = data.map(d => d.soil2 || null);
+                            const soil3 = data.map(d => d.soil3 || null);
+                            const soil4 = data.map(d => d.soil4 || null);
+                            
+                            new Chart(ctx, {
+                                type: 'line',
+                                data: {
+                                    labels: labels,
+                                    datasets: [{
+                                        label: 'Soil 1 (%)',
+                                        data: soil1,
+                                        borderColor: 'rgb(139, 195, 74)',
+                                        backgroundColor: 'rgba(139, 195, 74, 0.1)',
+                                        borderWidth: 2,
+                                        spanGaps: true
+                                    }, {
+                                        label: 'Soil 2 (%)',
+                                        data: soil2,
+                                        borderColor: 'rgb(76, 175, 80)',
+                                        backgroundColor: 'rgba(76, 175, 80, 0.1)',
+                                        borderWidth: 2,
+                                        spanGaps: true
+                                    }, {
+                                        label: 'Soil 3 (%)',
+                                        data: soil3,
+                                        borderColor: 'rgb(46, 125, 50)',
+                                        backgroundColor: 'rgba(46, 125, 50, 0.1)',
+                                        borderWidth: 2,
+                                        spanGaps: true
+                                    }, {
+                                        label: 'Soil 4 (%)',
+                                        data: soil4,
+                                        borderColor: 'rgb(27, 94, 32)',
+                                        backgroundColor: 'rgba(27, 94, 32, 0.1)',
+                                        borderWidth: 2,
+                                        spanGaps: true
+                                    }]
+                                },
+                                options: {
+                                    responsive: true,
+                                    interaction: {
+                                        mode: 'index',
+                                        intersect: false,
+                                    },
+                                    scales: {
+                                        y: {
+                                            type: 'linear',
+                                            display: true,
+                                            title: {
+                                                display: true,
+                                                text: 'Moisture (%)'
+                                            },
+                                            min: 0,
+                                            max: 100
+                                        }
+                                    },
+                                    plugins: {
+                                        legend: {
+                                            display: true,
+                                            position: 'top'
+                                        }
+                                    }
+                                }
+                            });
+                        }
+                    }
+                })
+                .catch(error => console.error('Soil chart error:', error));
+        }
+        
+        function updateRelayStatus() {
+            fetch('/api/relays')
+                .then(response => response.json())
+                .then(data => {
+                    if (data && !data.error) {
+                        const states = data.states || data;
+                        const messages = data.messages || {};
+                        
+                        // Humidifier
+                        const humidifierOn = states.humidifier;
+                        document.getElementById('humidifierStatus').textContent = humidifierOn ? 'ON' : 'OFF';
+                        document.getElementById('humidifierStatus').className = 'relay-status ' + (humidifierOn ? 'status-on' : 'status-off');
+                        document.getElementById('humidifierMessage').textContent = messages.humidifier || '';
+                        
+                        // Dehumidifier
+                        const dehumidifierOn = states.dehumidifier;
+                        document.getElementById('dehumidifierStatus').textContent = dehumidifierOn ? 'ON' : 'OFF';
+                        document.getElementById('dehumidifierStatus').className = 'relay-status ' + (dehumidifierOn ? 'status-on' : 'status-off');
+                        document.getElementById('dehumidifierMessage').textContent = messages.dehumidifier || '';
+                        
+                        // Heater
+                        const heaterOn = states.heater;
+                        document.getElementById('heaterStatus').textContent = heaterOn ? 'ON' : 'OFF';
+                        document.getElementById('heaterStatus').className = 'relay-status ' + (heaterOn ? 'status-on' : 'status-off');
+                        document.getElementById('heaterMessage').textContent = messages.heater || '';
+                        
+                        // Light
+                        const lightOn = states.light;
+                        document.getElementById('lightStatus').textContent = lightOn ? 'ON' : 'OFF';
+                        document.getElementById('lightStatus').className = 'relay-status ' + (lightOn ? 'status-on' : 'status-off');
+                        document.getElementById('lightMessage').textContent = messages.light || '';
+                    }
+                })
+                .catch(error => console.error('Error loading relay status:', error));
+        }
+        
+        function updateLightSchedule() {
+            fetch('/api/light/schedule')
+                .then(response => response.json())
+                .then(data => {
+                    if (data && data.on_time && data.off_time) {
+                        document.getElementById('scheduleOnTime').textContent = data.on_time;
+                        document.getElementById('scheduleOffTime').textContent = data.off_time;
+                        document.getElementById('currentSchedule').style.display = 'block';
+                    }
+                })
+                .catch(error => console.error('Error loading light schedule:', error));
+        }
+        
+        function setLightSchedule() {
+            const cycle = document.getElementById('lightCycle').value;
+            const offTime = document.getElementById('lightOffTime').value;
+            
+            if (!offTime) {
+                alert('Please enter when lights turn off');
+                return;
+            }
+            
+            // Parse the cycle (e.g., "18/6" means 18 hours on, 6 hours off)
+            const [hoursOn, hoursOff] = cycle.split('/').map(Number);
+            
+            // Calculate on time based on off time and hours on
+            const [offHour, offMinute] = offTime.split(':').map(Number);
+            let onHour = offHour - hoursOn;
+            
+            // Handle day wrap-around
+            if (onHour < 0) {
+                onHour += 24;
+            }
+            
+            const onTime = `${String(onHour).padStart(2, '0')}:${String(offMinute).padStart(2, '0')}`;
+            
+            console.log(`Setting schedule: ${cycle} - Lights on at ${onTime}, off at ${offTime}`);
+            
+            fetch('/api/light/schedule', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    on_time: onTime,
+                    off_time: offTime,
+                    enabled: true
+                })
+            })
+            .then(response => response.json())
+            .then(result => {
+                if (result.success) {
+                    updateLightSchedule();
+                    alert(`Light schedule set to ${cycle}: ON at ${onTime}, OFF at ${offTime}`);
+                } else {
+                    alert('Error: ' + result.error);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Error setting light schedule');
+            });
+        }
+        
+        function setTargetHumidity() {
+            const humidity = parseFloat(document.getElementById('newTargetHumidity').value);
+            
+            if (!humidity || humidity < 0 || humidity > 100) {
+                alert('Please enter a valid humidity (0-100%)');
+                return;
+            }
+            
+            fetch('/api/climate/settings', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    target_humidity: humidity
+                })
+            })
+            .then(response => response.json())
+            .then(result => {
+                if (result.success) {
+                    document.getElementById('targetHumidityDisplay').textContent = humidity + '%';
+                    document.getElementById('newTargetHumidity').value = '';
+                    alert('Target humidity updated to ' + humidity + '%');
+                } else {
+                    alert('Error: ' + result.error);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Error setting target humidity');
+            });
+        }
+        
+        function setTargetTemp() {
+            const tempF = parseFloat(document.getElementById('newTargetTemp').value);
+            
+            if (!tempF || tempF < 32 || tempF > 110) {
+                alert('Please enter a valid temperature (32-110°F)');
+                return;
+            }
+            
+            // Convert Fahrenheit to Celsius for the API
+            const tempC = (tempF - 32) * 5/9;
+            
+            fetch('/api/climate/settings', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    target_temp: tempC
+                })
+            })
+            .then(response => response.json())
+            .then(result => {
+                if (result.success) {
+                    document.getElementById('targetTempDisplay').textContent = tempF + '°F';
+                    document.getElementById('newTargetTemp').value = '';
+                    alert('Target temperature updated to ' + tempF + '°F');
+                } else {
+                    alert('Error: ' + result.error);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Error setting target temperature');
+            });
+        }
+        
+        // ML Functions
+        function updateMLStatus() {
+            fetch('/api/ml/status')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.available) {
+                        const status = data.models_trained ? 'Models Trained' : 'Not Trained';
+                        const enabledText = data.enabled ? '(Enabled)' : '(Disabled)';
+                        document.getElementById('mlStatus').textContent = status + ' ' + enabledText;
+                        
+                        let details = '';
+                        if (data.models_trained) {
+                            const lastTrain = new Date(data.last_train_time * 1000);
+                            const now = new Date();
+                            const minsAgo = Math.floor((now - lastTrain) / 60000);
+                            details = `Predicting ${data.prediction_horizon_minutes}min ahead | Auto-retrain every 15min | Last: ${minsAgo}min ago`;
+                        } else {
+                            details = 'Train models to enable predictions';
+                        }
+                        document.getElementById('mlStatusDetails').textContent = details;
+                        
+                        // Update toggle button
+                        document.getElementById('toggleMlBtn').textContent = data.enabled ? 'Disable ML' : 'Enable ML';
+                        document.getElementById('toggleMlBtn').className = data.enabled ? 'btn btn-gray' : 'btn btn-primary';
+                        
+                        // Show prediction if trained
+                        if (data.models_trained && data.enabled) {
+                            updateMLPrediction();
+                        }
+                    }
+                })
+                .catch(error => console.error('Error loading ML status:', error));
+        }
+        
+        function updateMLPrediction() {
+            fetch('/api/ml/predict')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success && data.prediction) {
+                        const pred = data.prediction;
+                        const tempF = (pred.predicted_temp * 9/5 + 32).toFixed(1);
+                        const text = `Temp: ${tempF}°F (${pred.temp_change > 0 ? '+' : ''}${pred.temp_change.toFixed(1)}°C), Humidity: ${pred.predicted_humidity.toFixed(1)}% (${pred.humidity_change > 0 ? '+' : ''}${pred.humidity_change.toFixed(1)}%)`;
+                        document.getElementById('mlPredictionText').textContent = text;
+                        document.getElementById('mlPrediction').style.display = 'block';
+                    }
+                })
+                .catch(error => console.error('Error loading ML prediction:', error));
+        }
+        
+        function trainML() {
+            if (!confirm('Train ML models with current data? This may take 10-30 seconds.')) {
+                return;
+            }
+            
+            document.getElementById('trainMlBtn').disabled = true;
+            document.getElementById('trainMlBtn').textContent = 'Training...';
+            
+            fetch('/api/ml/train', {
+                method: 'POST'
+            })
+            .then(response => response.json())
+            .then(result => {
+                if (result.success) {
+                    alert('ML training started. Check status in a few seconds.');
+                    setTimeout(updateMLStatus, 3000);
+                } else {
+                    alert('Error: ' + result.error);
+                }
+            })
+            .catch(error => {
+                alert('Error training ML models');
+                console.error('Error:', error);
+            })
+            .finally(() => {
+                document.getElementById('trainMlBtn').disabled = false;
+                document.getElementById('trainMlBtn').textContent = 'Train Models';
+            });
+        }
+        
+        function resetML() {
+            if (!confirm('Reset ML models? This will delete all trained data. You will need to retrain after making changes to your greenhouse setup.')) {
+                return;
+            }
+            
+            fetch('/api/ml/reset', {
+                method: 'POST'
+            })
+            .then(response => response.json())
+            .then(result => {
+                if (result.success) {
+                    alert('ML models reset successfully. Train with new data when ready.');
+                    updateMLStatus();
+                } else {
+                    alert('Error: ' + result.error);
+                }
+            })
+            .catch(error => {
+                alert('Error resetting ML models');
+                console.error('Error:', error);
+            });
+        }
+        
+        function toggleML() {
+            fetch('/api/ml/status')
+                .then(response => response.json())
+                .then(data => {
+                    const newState = !data.enabled;
+                    
+                    return fetch('/api/ml/toggle', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({
+                            enabled: newState
+                        })
+                    });
+                })
+                .then(response => response.json())
+                .then(result => {
+                    if (result.success) {
+                        updateMLStatus();
+                        alert('ML predictions ' + (result.ml_enabled ? 'enabled' : 'disabled'));
+                    }
+                })
+                .catch(error => {
+                    alert('Error toggling ML');
+                    console.error('Error:', error);
+                });
+        }
+        
         window.addEventListener('DOMContentLoaded', function() {
             updateData();
             updateStatistics();
             updateChart();
+            updateSoilChart();
             loadPlants();
+            updateRelayStatus();
+            updateLightSchedule();
+            updateMLStatus();
             // Update every 5 seconds
             setInterval(updateData, 5000);
+            setInterval(updateRelayStatus, 5000);
             // Update stats and chart every 2 minutes
             setInterval(updateStatistics, 120000);
+            // Update ML status every 30 seconds
+            setInterval(updateMLStatus, 30000);
             
             // Plant form submission
             document.getElementById('addPlantBtn').addEventListener('click', addPlant);
             document.getElementById('clearPlantBtn').addEventListener('click', clearPlantForm);
+            
+            // Light schedule button
+            document.getElementById('setScheduleBtn').addEventListener('click', setLightSchedule);
+            
+            // Climate control buttons
+            document.getElementById('setHumidityBtn').addEventListener('click', setTargetHumidity);
+            document.getElementById('setTempBtn').addEventListener('click', setTargetTemp);
+            
+            // ML control buttons
+            document.getElementById('trainMlBtn').addEventListener('click', trainML);
+            document.getElementById('resetMlBtn').addEventListener('click', resetML);
+            document.getElementById('toggleMlBtn').addEventListener('click', toggleML);
         });
         
         function loadPlants() {
@@ -304,6 +731,32 @@
             </div>
         </section>
 
+        <!-- Machine Learning Section -->
+        <section class="card">
+            <div class="card-header">
+                <h2>🤖 Machine Learning</h2>
+            </div>
+            <div class="card-body">
+                <div class="ml-status" style="margin-bottom: 15px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 10px; background: rgba(255,255,255,0.3); border-radius: 6px;">
+                        <div>
+                            <strong>Status:</strong> <span id="mlStatus">--</span><br>
+                            <small id="mlStatusDetails">--</small>
+                        </div>
+                        <button class="btn btn-small btn-primary" id="trainMlBtn">Train Models</button>
+                    </div>
+                </div>
+                <div class="ml-controls" style="display: flex; gap: 10px; flex-wrap: wrap;">
+                    <button class="btn btn-orange" id="resetMlBtn">Reset ML Data</button>
+                    <button class="btn btn-gray" id="toggleMlBtn">Disable ML</button>
+                </div>
+                <div id="mlPrediction" style="margin-top: 15px; padding: 10px; background: rgba(255,255,255,0.2); border-radius: 6px; display: none;">
+                    <strong>Current Prediction (10min ahead):</strong><br>
+                    <small id="mlPredictionText">--</small>
+                </div>
+            </div>
+        </section>
+
         <!-- Plant Tracker Section -->
         <section class="card">
             <div class="card-header clickable" onclick="toggleSection('plantTracker')">
@@ -315,7 +768,7 @@
                     <div class="section-title">➕ Add New Plant</div>
                     <span class="expand-icon" id="addPlantIcon">▼</span>
                 </div>
-                <div class="sub-section" id="addPlantContent">
+                <div class="sub-section collapsed" id="addPlantContent">
                     <div class="form-group">
                         <label>Strain Name *</label>
                         <input type="text" id="strainName" class="form-input" placeholder="e.g., Blue Dream">
@@ -371,16 +824,32 @@
             <div class="card-body">
                 <div class="relay-list">
                     <div class="relay-item">
-                        <span>Humidifier</span>
+                        <div>
+                            <strong>Humidifier</strong>
+                            <div class="relay-message" id="humidifierMessage">--</div>
+                        </div>
+                        <span class="relay-status" id="humidifierStatus">--</span>
                     </div>
                     <div class="relay-item">
-                        <span>Dehumidifier</span>
+                        <div>
+                            <strong>Dehumidifier</strong>
+                            <div class="relay-message" id="dehumidifierMessage">--</div>
+                        </div>
+                        <span class="relay-status" id="dehumidifierStatus">--</span>
                     </div>
                     <div class="relay-item">
-                        <span>Heater</span>
+                        <div>
+                            <strong>Heater</strong>
+                            <div class="relay-message" id="heaterMessage">--</div>
+                        </div>
+                        <span class="relay-status" id="heaterStatus">--</span>
                     </div>
                     <div class="relay-item">
-                        <span>Light</span>
+                        <div>
+                            <strong>Light</strong>
+                            <div class="relay-message" id="lightMessage">--</div>
+                        </div>
+                        <span class="relay-status" id="lightStatus">--</span>
                     </div>
                 </div>
 
@@ -392,7 +861,7 @@
                         <label>New Target:</label>
                         <input type="number" class="inline-input" id="newTargetHumidity" placeholder="">
                         <span>%</span>
-                        <button class="btn btn-small btn-primary">Set</button>
+                        <button class="btn btn-small btn-primary" id="setHumidityBtn">Set</button>
                     </div>
 
                     <div class="target-row" style="margin-top: 20px;">
@@ -402,29 +871,34 @@
                         <label>New Temp:</label>
                         <input type="number" class="inline-input" id="newTargetTemp" placeholder="">
                         <span>°F</span>
-                        <button class="btn btn-small btn-orange">Set</button>
+                        <button class="btn btn-small btn-orange" id="setTempBtn">Set</button>
                     </div>
                 </div>
 
                 <!-- Light Schedule -->
                 <div class="schedule-section">
                     <h3>💡 Light Schedule</h3>
+                    <div class="schedule-display" id="currentSchedule" style="padding: 10px; background: rgba(255,255,255,0.3); border-radius: 6px; margin-bottom: 15px; display: none;">
+                        <strong>Active Schedule:</strong><br>
+                        <span id="scheduleOnTime">--</span> to <span id="scheduleOffTime">--</span>
+                    </div>
                     <div class="schedule-inputs">
                         <div class="schedule-row">
-                            <label>On:</label>
-                            <input type="number" class="time-input" placeholder="">
-                            <span>hours</span>
+                            <label>Light Cycle:</label>
+                            <select class="time-input" id="lightCycle" style="width: auto;">
+                                <option value="18/6">18/6 (Veg)</option>
+                                <option value="16/8">16/8</option>
+                                <option value="14/10">14/10</option>
+                                <option value="12/12">12/12 (Flower)</option>
+                                <option value="20/4">20/4 (Auto)</option>
+                                <option value="24/0">24/0 (Seedling)</option>
+                            </select>
                         </div>
                         <div class="schedule-row">
-                            <label>Off:</label>
-                            <input type="number" class="time-input" placeholder="">
-                            <span>hours</span>
+                            <label>Lights Off At:</label>
+                            <input type="time" class="time-input" id="lightOffTime" placeholder="">
                         </div>
-                        <div class="schedule-row">
-                            <label>Off at:</label>
-                            <input type="time" class="time-input" placeholder="">
-                        </div>
-                        <button class="btn btn-yellow">Set Schedule</button>
+                        <button class="btn btn-yellow" id="setScheduleBtn">Set Schedule</button>
                     </div>
                 </div>
             </div>
@@ -437,7 +911,26 @@
                 <button class="btn btn-refresh" onclick="refreshSoil()">Refresh</button>
             </div>
             <div class="card-body">
-                <div id="soilLoading">Loading moisture sensors...</div>
+                <!-- Current Soil Moisture Readings -->
+                <div class="readings-grid" style="grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); margin-bottom: 20px;">
+                    <div style="padding: 15px; background: rgba(255,255,255,0.3); border-radius: 6px; text-align: center;">
+                        <div style="font-size: 0.9em; margin-bottom: 5px;">🌱 Soil 1</div>
+                        <div style="font-size: 1.8em; font-weight: bold; color: var(--primary-green);" id="soil1Value">--</div>
+                    </div>
+                    <div style="padding: 15px; background: rgba(255,255,255,0.3); border-radius: 6px; text-align: center;">
+                        <div style="font-size: 0.9em; margin-bottom: 5px;">🌱 Soil 2</div>
+                        <div style="font-size: 1.8em; font-weight: bold; color: var(--primary-green);" id="soil2Value">--</div>
+                    </div>
+                    <div style="padding: 15px; background: rgba(255,255,255,0.3); border-radius: 6px; text-align: center;">
+                        <div style="font-size: 0.9em; margin-bottom: 5px;">🌱 Soil 3</div>
+                        <div style="font-size: 1.8em; font-weight: bold; color: var(--primary-green);" id="soil3Value">--</div>
+                    </div>
+                    <div style="padding: 15px; background: rgba(255,255,255,0.3); border-radius: 6px; text-align: center;">
+                        <div style="font-size: 0.9em; margin-bottom: 5px;">🌱 Soil 4</div>
+                        <div style="font-size: 1.8em; font-weight: bold; color: var(--primary-green);" id="soil4Value">--</div>
+                    </div>
+                </div>
+                
                 <h3>Moisture History (All Sensors)</h3>
                 <div class="chart-container" id="soilChartContainer"></div>
                 

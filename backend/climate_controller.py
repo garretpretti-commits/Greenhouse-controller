@@ -1,12 +1,19 @@
 """
 Machine Learning Climate Controller
-Uses simple control logic and optional ML for greenhouse climate control
+Uses simple control logic and ML predictions for greenhouse climate control
 """
 
 import time
 from typing import Dict, Any, Optional
 from datetime import datetime
 import threading
+
+try:
+    from ml_climate_predictor import MLClimatePredictor
+    ML_AVAILABLE = True
+except ImportError:
+    ML_AVAILABLE = False
+    print("Warning: ML predictor not available, using basic control only")
 
 class ClimateController:
     """
@@ -26,8 +33,25 @@ class ClimateController:
         
         # Control state
         self.enabled = False
+        self.use_ml = True  # Enable ML predictions by default
         self.last_action_time = 0
         self.min_action_interval = 60  # Minimum seconds between actions
+        
+        # Track last known relay states to avoid redundant logging
+        self.last_relay_states = {
+            'humidifier': None,
+            'dehumidifier': None,
+            'heater': None
+        }
+        
+        # ML predictor
+        self.ml_predictor = None
+        if ML_AVAILABLE:
+            try:
+                self.ml_predictor = MLClimatePredictor(database)
+                print("ML Climate Predictor initialized")
+            except Exception as e:
+                print(f"Failed to initialize ML predictor: {e}")
         
         # Thread control
         self.control_thread = None
@@ -66,9 +90,10 @@ class ClimateController:
             self.humidity_tolerance = humidity_tolerance
             self.db.set_setting('humidity_tolerance', str(humidity_tolerance))
     
-    def calculate_control_actions(self, temperature: float, humidity: float) -> Dict[str, bool]:
+    def calculate_control_actions(self, temperature: float, humidity: float, relay_states: Optional[Dict[str, bool]] = None) -> Dict[str, bool]:
         """
         Calculate required control actions based on sensor readings
+        Uses ML predictions if available for proactive control
         Returns dict with relay states for humidifier, dehumidifier, heater
         """
         actions = {
@@ -77,29 +102,91 @@ class ClimateController:
             'heater': False
         }
         
-        # Temperature control
+        # Get current relay states if not provided
+        if relay_states is None:
+            try:
+                relay_states = self.board.get_relay_states()
+            except:
+                relay_states = actions.copy()
+        
+        # Use ML prediction if available and enabled
+        prediction = None
+        if self.use_ml and self.ml_predictor and self.ml_predictor.temp_model is not None:
+            try:
+                current_data = {
+                    'temperature': temperature,
+                    'humidity': humidity
+                }
+                prediction = self.ml_predictor.predict(current_data, relay_states)
+                
+                if prediction:
+                    # Check if models need retraining
+                    if self.ml_predictor.should_retrain():
+                        print("Retraining ML models in background...")
+                        threading.Thread(target=self.ml_predictor.train_models, daemon=True).start()
+                
+            except Exception as e:
+                print(f"ML prediction error: {e}")
+                prediction = None
+        
+        # Temperature control with ML predictions
         temp_low = self.target_temp - self.temp_tolerance
         temp_high = self.target_temp + self.temp_tolerance
         
-        if temperature < temp_low:
-            actions['heater'] = True
-        elif temperature > temp_high:
-            actions['heater'] = False
-            # Could add cooling logic here if you have cooling equipment
+        if prediction and self.use_ml:
+            # Predictive control: turn on heater if we predict temperature will drop below target
+            predicted_temp = prediction['predicted_temp']
+            
+            if predicted_temp < temp_low:
+                actions['heater'] = True
+            elif temperature > temp_high:
+                actions['heater'] = False
+            else:
+                # Within range, use prediction to decide
+                actions['heater'] = predicted_temp < self.target_temp
+        else:
+            # Basic reactive control
+            if temperature < temp_low:
+                actions['heater'] = True
+            elif temperature > temp_high:
+                actions['heater'] = False
         
-        # Humidity control
+        # Humidity control with ML predictions
         humidity_low = self.target_humidity - self.humidity_tolerance
         humidity_high = self.target_humidity + self.humidity_tolerance
         
-        if humidity < humidity_low:
-            actions['humidifier'] = True
-            actions['dehumidifier'] = False
-        elif humidity > humidity_high:
-            actions['humidifier'] = False
-            actions['dehumidifier'] = True
+        if prediction and self.use_ml:
+            # Predictive control
+            predicted_humidity = prediction['predicted_humidity']
+            
+            if predicted_humidity < humidity_low:
+                actions['humidifier'] = True
+                actions['dehumidifier'] = False
+            elif predicted_humidity > humidity_high:
+                actions['humidifier'] = False
+                actions['dehumidifier'] = True
+            else:
+                # Within range, use prediction to decide
+                if predicted_humidity < self.target_humidity:
+                    actions['humidifier'] = True
+                    actions['dehumidifier'] = False
+                elif predicted_humidity > self.target_humidity:
+                    actions['humidifier'] = False
+                    actions['dehumidifier'] = True
+                else:
+                    actions['humidifier'] = False
+                    actions['dehumidifier'] = False
         else:
-            actions['humidifier'] = False
-            actions['dehumidifier'] = False
+            # Basic reactive control
+            if humidity < humidity_low:
+                actions['humidifier'] = True
+                actions['dehumidifier'] = False
+            elif humidity > humidity_high:
+                actions['humidifier'] = False
+                actions['dehumidifier'] = True
+            else:
+                actions['humidifier'] = False
+                actions['dehumidifier'] = False
         
         return actions
     
@@ -112,10 +199,13 @@ class ClimateController:
                 heater=actions['heater']
             )
             
-            # Log actions to database
+            # Log actions to database ONLY if state changed
             if success:
                 for relay, state in actions.items():
-                    self.db.log_relay_change(relay, state, mode='auto')
+                    # Only log if this is a state change
+                    if self.last_relay_states.get(relay) != state:
+                        self.db.log_relay_change(relay, state, mode='auto')
+                        self.last_relay_states[relay] = state
             
             return success
         except Exception as e:
@@ -156,6 +246,14 @@ class ClimateController:
         """Main control loop (runs in separate thread)"""
         print("Climate controller started")
         
+        # Train ML models on startup if available and not trained
+        if self.ml_predictor and self.ml_predictor.temp_model is None:
+            print("Training ML models on startup...")
+            try:
+                self.ml_predictor.train_models()
+            except Exception as e:
+                print(f"Initial ML training failed: {e}")
+        
         while self.running:
             try:
                 if self.enabled:
@@ -164,6 +262,13 @@ class ClimateController:
                     
                     # Execute control cycle
                     self.control_cycle()
+                    
+                    # Check if ML models need retraining
+                    if self.ml_predictor and self.use_ml:
+                        if self.ml_predictor.should_retrain():
+                            print("Auto-retraining ML models for seasonal adaptation...")
+                            # Train in background thread to not block control
+                            threading.Thread(target=self.ml_predictor.train_models, daemon=True).start()
                 
                 # Sleep between cycles
                 time.sleep(10)  # Check every 10 seconds

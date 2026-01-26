@@ -244,10 +244,37 @@ textarea.form-input {
     padding: 15px;
     border-bottom: 1px solid rgba(0,0,0,0.1);
     font-size: 1.05em;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
 }
 
 .relay-item:last-child {
     border-bottom: none;
+}
+
+.relay-message {
+    font-size: 0.85em;
+    color: #666;
+    margin-top: 2px;
+    font-weight: normal;
+}
+
+.relay-status {
+    font-weight: bold;
+    padding: 4px 12px;
+    border-radius: 4px;
+    font-size: 0.85em;
+}
+
+.status-on {
+    background-color: #4caf50;
+    color: white;
+}
+
+.status-off {
+    background-color: #ccc;
+    color: #666;
 }
 
 /* Target Settings */
@@ -277,7 +304,7 @@ textarea.form-input {
 }
 
 .inline-input {
-    flex: 1;
+    width: 60px;
     padding: 8px 12px;
     border: 1px solid #ccc;
     border-radius: 8px;

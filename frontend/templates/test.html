@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>API Test</title>
+</head>
+<body>
+    <h1>API Test</h1>
+    <div id="output" style="font-family: monospace; white-space: pre;"></div>
+    <script>
+        async function test() {
+            try {
+                const response = await fetch('/api/sensors/current');
+                const data = await response.json();
+                document.getElementById('output').textContent = JSON.stringify(data, null, 2);
+                
+                // Try to update the main page
+                if (data.temperature) {
+                    alert('Data received: Temp=' + data.temperature + ', Humidity=' + data.humidity);
+                }
+            } catch(error) {
+                document.getElementById('output').textContent = 'Error: ' + error;
+            }
+        }
+        test();
+    </script>
+</body>
+</html>

@@ -142,6 +142,28 @@ class GreenhouseDB:
             conn.commit()
             conn.close()
     
+    def get_relay_state_changes(self, relay_name: str, limit: int = 10):
+        """Get recent state changes for a relay"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT timestamp, state, mode
+            FROM relay_history
+            WHERE relay_name = ?
+            ORDER BY timestamp DESC
+            LIMIT ?
+        ''', (relay_name, limit))
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        return [{
+            'timestamp': row['timestamp'],
+            'state': bool(row['state']),
+            'mode': row['mode']
+        } for row in rows]
+    
     def get_latest_sensor_data(self) -> Optional[Dict[str, Any]]:
         """Get most recent sensor reading"""
         conn = self.get_connection()

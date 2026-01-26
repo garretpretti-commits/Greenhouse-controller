@@ -7,6 +7,7 @@ from flask import Flask, jsonify, request, render_template, send_from_directory
 from flask_cors import CORS
 import time
 import threading
+from datetime import datetime
 from rp2040_interface import Board1Controller
 from database import GreenhouseDB, init_default_settings
 from climate_controller import ClimateController, LightScheduler
@@ -131,13 +132,102 @@ def api_sensor_history():
 
 @app.route('/api/relays')
 def api_get_relays():
-    """Get current relay states"""
+    """Get current relay states with status messages"""
     try:
         if not system_status['board1_connected']:
             return jsonify({'error': 'Board not connected'}), 503
         
         states = board1.get_relay_states()
-        return jsonify(states)
+        
+        # Get current sensor data to determine why relays are in their state
+        sensor_data = system_status.get('cached_sensor_data', {})
+        temp = sensor_data.get('temperature', 0)
+        humidity = sensor_data.get('humidity', 0)
+        
+        # Get climate settings
+        climate_status = climate_controller.get_status()
+        target_temp = climate_status['target_temp']
+        target_humidity = climate_status['target_humidity']
+        
+        # Get light schedule
+        light_schedule = light_scheduler.schedule
+        
+        # Add status messages with timing info
+        status_messages = {}
+        current_time = time.time()
+        
+        # Get state change history for each relay
+        for relay_name in ['humidifier', 'dehumidifier', 'heater', 'light']:
+            history = db.get_relay_state_changes(relay_name, limit=2)
+            
+            # Find when current state started
+            start_time = None
+            if history and len(history) > 0:
+                latest = history[0]
+                if latest['state'] == states.get(relay_name):
+                    start_time = latest['timestamp']
+            
+            # Calculate duration
+            duration_str = ""
+            if start_time and states.get(relay_name):
+                duration_mins = int((current_time - start_time) / 60)
+                if duration_mins < 60:
+                    duration_str = f" ({duration_mins}m)"
+                else:
+                    hours = duration_mins // 60
+                    mins = duration_mins % 60
+                    duration_str = f" ({hours}h {mins}m)"
+            
+            # Build status messages
+            if relay_name == 'humidifier':
+                if states.get('humidifier'):
+                    status_messages['humidifier'] = f"Humidifying to {target_humidity}%{duration_str}"
+                else:
+                    status_messages['humidifier'] = f"Off - At {humidity:.0f}%"
+            
+            elif relay_name == 'dehumidifier':
+                if states.get('dehumidifier'):
+                    status_messages['dehumidifier'] = f"Dehumidifying to {target_humidity}%{duration_str}"
+                else:
+                    status_messages['dehumidifier'] = f"Off - At {humidity:.0f}%"
+            
+            elif relay_name == 'heater':
+                if states.get('heater'):
+                    status_messages['heater'] = f"Heating to {(target_temp * 9/5 + 32):.0f}°F{duration_str}"
+                else:
+                    temp_f = (temp * 9/5 + 32)
+                    status_messages['heater'] = f"Off - At {temp_f:.0f}°F"
+            
+            elif relay_name == 'light':
+                if states.get('light'):
+                    # Calculate time until off
+                    if light_schedule and light_schedule.get('off_time'):
+                        now = datetime.now()
+                        off_time_parts = light_schedule['off_time'].split(':')
+                        off_hour = int(off_time_parts[0])
+                        off_minute = int(off_time_parts[1])
+                        
+                        off_today = now.replace(hour=off_hour, minute=off_minute, second=0, microsecond=0)
+                        if off_today < now:
+                            off_today = off_today.replace(day=now.day + 1)
+                        
+                        time_until_off = (off_today - now).seconds // 60
+                        hours_left = time_until_off // 60
+                        mins_left = time_until_off % 60
+                        
+                        status_messages['light'] = f"On{duration_str} - Off at {light_schedule['off_time']}"
+                    else:
+                        status_messages['light'] = f"On{duration_str}"
+                else:
+                    if light_schedule and light_schedule.get('on_time'):
+                        status_messages['light'] = f"Off - On at {light_schedule['on_time']}"
+                    else:
+                        status_messages['light'] = "Off"
+        
+        return jsonify({
+            'states': states,
+            'messages': status_messages
+        })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -313,6 +403,114 @@ def api_set_setting(key):
         db.set_setting(key, value)
         
         return jsonify({'success': True, 'key': key, 'value': value})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# ============= MACHINE LEARNING API =============
+
+@app.route('/api/ml/train', methods=['POST'])
+def api_ml_train():
+    """Train ML climate models"""
+    try:
+        if not hasattr(climate_controller, 'ml_predictor') or climate_controller.ml_predictor is None:
+            return jsonify({'error': 'ML predictor not available'}), 503
+        
+        # Train in background thread to avoid blocking
+        def train_async():
+            climate_controller.ml_predictor.train_models()
+        
+        threading.Thread(target=train_async, daemon=True).start()
+        
+        return jsonify({'success': True, 'message': 'Training started in background'})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/ml/predict', methods=['GET'])
+def api_ml_predict():
+    """Get ML prediction for current conditions"""
+    try:
+        if not hasattr(climate_controller, 'ml_predictor') or climate_controller.ml_predictor is None:
+            return jsonify({'error': 'ML predictor not available'}), 503
+        
+        if climate_controller.ml_predictor.temp_model is None:
+            return jsonify({'error': 'Models not trained yet'}), 503
+        
+        # Get current sensor data
+        sensor_data = system_status.get('cached_sensor_data', {})
+        if not sensor_data:
+            return jsonify({'error': 'No sensor data available'}), 503
+        
+        # Get current relay states
+        relay_states = board1.get_relay_states()
+        
+        # Make prediction
+        prediction = climate_controller.ml_predictor.predict(sensor_data, relay_states)
+        
+        return jsonify({
+            'success': True,
+            'current': sensor_data,
+            'prediction': prediction,
+            'horizon_minutes': climate_controller.ml_predictor.prediction_horizon
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/ml/status', methods=['GET'])
+def api_ml_status():
+    """Get ML system status"""
+    try:
+        if not hasattr(climate_controller, 'ml_predictor') or climate_controller.ml_predictor is None:
+            return jsonify({
+                'available': False,
+                'enabled': False
+            })
+        
+        ml_pred = climate_controller.ml_predictor
+        
+        return jsonify({
+            'available': True,
+            'enabled': climate_controller.use_ml,
+            'models_trained': ml_pred.temp_model is not None,
+            'last_train_time': ml_pred.last_train_time,
+            'prediction_horizon_minutes': ml_pred.prediction_horizon,
+            'feature_importance': ml_pred.get_feature_importance() if ml_pred.temp_model else None
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/ml/toggle', methods=['POST'])
+def api_ml_toggle():
+    """Enable/disable ML predictions"""
+    try:
+        data = request.get_json()
+        enabled = data.get('enabled', True)
+        
+        climate_controller.use_ml = enabled
+        
+        return jsonify({
+            'success': True,
+            'ml_enabled': climate_controller.use_ml
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/ml/reset', methods=['POST'])
+def api_ml_reset():
+    """Reset ML models (clear trained data)"""
+    try:
+        if not hasattr(climate_controller, 'ml_predictor') or climate_controller.ml_predictor is None:
+            return jsonify({'error': 'ML predictor not available'}), 503
+        
+        success = climate_controller.ml_predictor.reset_models()
+        
+        if success:
+            return jsonify({
+                'success': True,
+                'message': 'ML models reset. Train with new data to enable predictions.'
+            })
+        else:
+            return jsonify({'error': 'Failed to reset models'}), 500
+            
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
