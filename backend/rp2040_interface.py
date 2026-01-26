@@ -13,11 +13,11 @@ from typing import Optional, Dict, Any
 class RP2040Board:
     """Interface for communicating with RP2040-Zero board via USB serial"""
     
-    def __init__(self, board_name: str, vendor_id: int = 0x2E8A, product_id: int = 0x0005):
+    def __init__(self, board_name: str, vendor_id: int = 0x2E8A, product_id: int = 0x101F):
         """
         Initialize RP2040 board connection
         vendor_id: Raspberry Pi RP2040 VID (0x2E8A)
-        product_id: RP2040 PID (0x0005)
+        product_id: RP2040 PID (0x101F for Waveshare RP2040-Zero)
         """
         self.board_name = board_name
         self.vendor_id = vendor_id
@@ -52,16 +52,18 @@ class RP2040Board:
                 write_timeout=1
             )
             
+            # Set connected flag before testing so send_command works
+            self.connected = True
             time.sleep(2)  # Wait for board to initialize
             
             # Test connection with ping
             response = self.send_command({'command': 'ping'})
             if response and response.get('status') == 'ok':
-                self.connected = True
                 print(f"Connected to {self.board_name} on {port}")
                 return True
             else:
                 print(f"Failed to ping {self.board_name}")
+                self.connected = False
                 return False
         
         except Exception as e:
@@ -120,7 +122,7 @@ class RP2040Board:
     
     def read_all_sensors(self) -> Optional[Dict[str, Any]]:
         """Read all sensor data from the board"""
-        response = self.send_command({'command': 'read_all'})
+        response = self.send_command({'command': 'read_all'}, timeout=5.0)
         if response:
             self.last_data = response
         return response

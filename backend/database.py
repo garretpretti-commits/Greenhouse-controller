@@ -73,6 +73,22 @@ class GreenhouseDB:
                 )
             ''')
             
+            # Plants table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS plants (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    strain_name TEXT NOT NULL,
+                    plant_type TEXT NOT NULL,
+                    veg_start_date TEXT,
+                    flower_start_date TEXT,
+                    harvest_date TEXT,
+                    dry_weight REAL,
+                    notes TEXT,
+                    created_at REAL NOT NULL,
+                    archived INTEGER DEFAULT 0
+                )
+            ''')
+            
             # Create indexes
             cursor.execute('''
                 CREATE INDEX IF NOT EXISTS idx_sensor_timestamp 
@@ -268,6 +284,53 @@ class GreenhouseDB:
             conn.close()
             
             return deleted
+    
+    def add_plant(self, strain_name: str, plant_type: str, veg_start_date: str = None,
+                  flower_start_date: str = None, harvest_date: str = None, 
+                  dry_weight: float = None, notes: str = None):
+        """Add a new plant to the database"""
+        with self.lock:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                INSERT INTO plants (strain_name, plant_type, veg_start_date, 
+                                  flower_start_date, harvest_date, dry_weight, 
+                                  notes, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (strain_name, plant_type, veg_start_date, flower_start_date, 
+                  harvest_date, dry_weight, notes, time.time()))
+            
+            plant_id = cursor.lastrowid
+            conn.commit()
+            conn.close()
+            
+            return plant_id
+    
+    def get_plants(self, include_archived: bool = False):
+        """Get all plants"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        if include_archived:
+            cursor.execute('SELECT * FROM plants ORDER BY created_at DESC')
+        else:
+            cursor.execute('SELECT * FROM plants WHERE archived = 0 ORDER BY created_at DESC')
+        
+        plants = [dict(row) for row in cursor.fetchall()]
+        conn.close()
+        
+        return plants
+    
+    def archive_plant(self, plant_id: int):
+        """Archive a plant"""
+        with self.lock:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute('UPDATE plants SET archived = 1 WHERE id = ?', (plant_id,))
+            conn.commit()
+            conn.close()
 
 
 # Initialize default settings

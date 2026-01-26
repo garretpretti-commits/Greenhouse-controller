@@ -28,7 +28,8 @@ light_scheduler = None
 system_status = {
     'board1_connected': False,
     'last_sensor_update': 0,
-    'errors': []
+    'errors': [],
+    'cached_sensor_data': None  # Cache the last sensor reading
 }
 
 def init_system():
@@ -68,6 +69,7 @@ def sensor_logging_loop():
                 if data and data.get('temperature') is not None:
                     db.log_sensor_data(data)
                     system_status['last_sensor_update'] = time.time()
+                    system_status['cached_sensor_data'] = data  # Cache the reading
             
             time.sleep(30)  # Log every 30 seconds
         except Exception as e:
@@ -98,13 +100,19 @@ def api_status():
 
 @app.route('/api/sensors/current')
 def api_current_sensors():
-    """Get current sensor readings"""
+    """Get current sensor readings (returns cached data for instant response)"""
     try:
         if not system_status['board1_connected']:
             return jsonify({'error': 'Board not connected'}), 503
         
+        # Return cached data instantly instead of reading fresh from RP2040
+        if system_status['cached_sensor_data']:
+            return jsonify(system_status['cached_sensor_data'])
+        
+        # Only if no cache exists yet, read fresh (first load only)
         data = board1.get_sensor_data()
         if data:
+            system_status['cached_sensor_data'] = data
             return jsonify(data)
         else:
             return jsonify({'error': 'Failed to read sensors'}), 500
@@ -305,6 +313,44 @@ def api_set_setting(key):
         db.set_setting(key, value)
         
         return jsonify({'success': True, 'key': key, 'value': value})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# ============= PLANT TRACKER API =============
+
+@app.route('/api/plants', methods=['GET'])
+def api_get_plants():
+    """Get all plants"""
+    try:
+        plants = db.get_plants()
+        return jsonify(plants)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/plants', methods=['POST'])
+def api_add_plant():
+    """Add a new plant"""
+    try:
+        data = request.json
+        plant_id = db.add_plant(
+            strain_name=data.get('strain_name'),
+            plant_type=data.get('plant_type'),
+            veg_start_date=data.get('veg_start_date'),
+            flower_start_date=data.get('flower_start_date'),
+            harvest_date=data.get('harvest_date'),
+            dry_weight=data.get('dry_weight'),
+            notes=data.get('notes')
+        )
+        return jsonify({'success': True, 'plant_id': plant_id})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/plants/<int:plant_id>/archive', methods=['POST'])
+def api_archive_plant(plant_id):
+    """Archive a plant"""
+    try:
+        db.archive_plant(plant_id)
+        return jsonify({'success': True})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 

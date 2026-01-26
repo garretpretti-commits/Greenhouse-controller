@@ -5,9 +5,8 @@ After=network.target
 [Service]
 Type=simple
 User=pi
-WorkingDirectory=/home/pi/websitephotos
-Environment="PATH=/home/pi/websitephotos/venv/bin"
-ExecStart=/home/pi/websitephotos/venv/bin/python3 /home/pi/websitephotos/backend/app.py
+WorkingDirectory=/home/pi/greenhouse-controller
+ExecStart=/usr/bin/python3 /home/pi/greenhouse-controller/backend/app.py
 Restart=always
 RestartSec=10
 StandardOutput=journal

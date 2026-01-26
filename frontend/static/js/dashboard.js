@@ -8,15 +8,21 @@ let currentLightMode = 'manual';
 
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', () => {
+    console.log('Dashboard loading...');
     initDashboard();
     setupEventListeners();
     startDataUpdates();
+    console.log('Dashboard loaded');
 });
 
 function initDashboard() {
-    // Initialize charts
-    initClimateChart();
-    initSoilChart();
+    // Initialize charts if elements exist
+    const climateChart = document.getElementById('climateChart');
+    const soilChart = document.getElementById('soilChart');
+    const historyChart = document.getElementById('historyChart');
+    
+    if (climateChart) initClimateChart();
+    if (soilChart) initSoilChart();
     
     // Load initial data
     updateSensorData();
@@ -26,51 +32,66 @@ function initDashboard() {
 }
 
 function setupEventListeners() {
-    // Climate mode toggle
-    document.getElementById('manualModeBtn').addEventListener('click', () => {
-        setClimateMode('manual');
-    });
+    // Check if elements exist before adding listeners
+    const manualModeBtn = document.getElementById('manualModeBtn');
+    const autoModeBtn = document.getElementById('autoModeBtn');
+    const lightManualBtn = document.getElementById('lightManualBtn');
+    const lightScheduleBtn = document.getElementById('lightScheduleBtn');
     
-    document.getElementById('autoModeBtn').addEventListener('click', () => {
-        setClimateMode('auto');
-    });
+    if (manualModeBtn) {
+        manualModeBtn.addEventListener('click', () => setClimateMode('manual'));
+    }
     
-    // Light mode toggle
-    document.getElementById('lightManualBtn').addEventListener('click', () => {
-        setLightMode('manual');
-    });
+    if (autoModeBtn) {
+        autoModeBtn.addEventListener('click', () => setClimateMode('auto'));
+    }
     
-    document.getElementById('lightScheduleBtn').addEventListener('click', () => {
-        setLightMode('schedule');
-    });
+    if (lightManualBtn) {
+        lightManualBtn.addEventListener('click', () => setLightMode('manual'));
+    }
+    
+    if (lightScheduleBtn) {
+        lightScheduleBtn.addEventListener('click', () => setLightMode('schedule'));
+    }
     
     // Relay toggles
-    document.getElementById('humidifierToggle').addEventListener('change', (e) => {
-        controlRelay('humidifier', e.target.checked);
-    });
+    const humidifierToggle = document.getElementById('humidifierToggle');
+    const dehumidifierToggle = document.getElementById('dehumidifierToggle');
+    const heaterToggle = document.getElementById('heaterToggle');
+    const lightToggle = document.getElementById('lightToggle');
     
-    document.getElementById('dehumidifierToggle').addEventListener('change', (e) => {
-        controlRelay('dehumidifier', e.target.checked);
-    });
-    
-    document.getElementById('heaterToggle').addEventListener('change', (e) => {
-        controlRelay('heater', e.target.checked);
-    });
-    
-    document.getElementById('lightToggle').addEventListener('change', (e) => {
-        controlRelay('light', e.target.checked);
-    });
+    if (humidifierToggle) {
+        humidifierToggle.addEventListener('change', (e) => controlRelay('humidifier', e.target.checked));
+    }
+    if (dehumidifierToggle) {
+        dehumidifierToggle.addEventListener('change', (e) => controlRelay('dehumidifier', e.target.checked));
+    }
+    if (heaterToggle) {
+        heaterToggle.addEventListener('change', (e) => controlRelay('heater', e.target.checked));
+    }
+    if (lightToggle) {
+        lightToggle.addEventListener('change', (e) => controlRelay('light', e.target.checked));
+    }
     
     // Settings save button
-    document.getElementById('saveSettingsBtn').addEventListener('click', saveClimateSettings);
+    const saveSettingsBtn = document.getElementById('saveSettingsBtn');
+    if (saveSettingsBtn) {
+        saveSettingsBtn.addEventListener('click', saveClimateSettings);
+    }
     
     // Light schedule save button
-    document.getElementById('saveLightScheduleBtn').addEventListener('click', saveLightSchedule);
+    const saveLightScheduleBtn = document.getElementById('saveLightScheduleBtn');
+    if (saveLightScheduleBtn) {
+        saveLightScheduleBtn.addEventListener('click', saveLightSchedule);
+    }
     
     // Time range selector
-    document.getElementById('timeRange').addEventListener('change', (e) => {
-        updateCharts(parseInt(e.target.value));
-    });
+    const timeRange = document.getElementById('timeRange');
+    if (timeRange) {
+        timeRange.addEventListener('change', (e) => {
+            updateCharts(parseInt(e.target.value));
+        });
+    }
 }
 
 function startDataUpdates() {
@@ -115,29 +136,53 @@ async function apiCall(endpoint, method = 'GET', data = null) {
 // ========== DATA UPDATES ==========
 
 async function updateSensorData() {
+    console.log('Fetching sensor data...');
     const data = await apiCall('/api/sensors/current');
+    console.log('Sensor data received:', data);
     
     if (data && !data.error) {
         updateConnectionStatus(true);
         
-        // Update temperature
-        document.getElementById('tempValue').textContent = 
-            data.temperature ? data.temperature.toFixed(1) : '--';
+        // Update temperature (convert to Fahrenheit)
+        const tempF = data.temperature ? (data.temperature * 9/5 + 32).toFixed(0) : '--';
+        const tempC = data.temperature ? data.temperature.toFixed(1) : '--';
+        console.log('Setting tempValue to:', tempF);
+        document.getElementById('tempValue').textContent = tempF;
+        const tempCelsius = document.getElementById('tempCelsius');
+        if (tempCelsius) {
+            tempCelsius.textContent = tempC + '°C';
+        }
         
         // Update humidity
+        console.log('Setting humidityValue to:', data.humidity ? data.humidity.toFixed(0) : '--');
         document.getElementById('humidityValue').textContent = 
-            data.humidity ? data.humidity.toFixed(1) : '--';
+            data.humidity ? data.humidity.toFixed(0) : '--';
         
         // Update soil moisture
         if (data.soil_moisture) {
-            document.getElementById('soil1Value').textContent = 
-                data.soil_moisture.soil1 ? data.soil_moisture.soil1.toFixed(1) : '--';
-            document.getElementById('soil2Value').textContent = 
-                data.soil_moisture.soil2 ? data.soil_moisture.soil2.toFixed(1) : '--';
-            document.getElementById('soil3Value').textContent = 
-                data.soil_moisture.soil3 ? data.soil_moisture.soil3.toFixed(1) : '--';
-            document.getElementById('soil4Value').textContent = 
-                data.soil_moisture.soil4 ? data.soil_moisture.soil4.toFixed(1) : '--';
+            const soil1 = document.getElementById('soil1Value');
+            const soil2 = document.getElementById('soil2Value');
+            const soil3 = document.getElementById('soil3Value');
+            const soil4 = document.getElementById('soil4Value');
+            
+            if (soil1) soil1.textContent = data.soil_moisture.soil1 ? data.soil_moisture.soil1.toFixed(1) : '--';
+            if (soil2) soil2.textContent = data.soil_moisture.soil2 ? data.soil_moisture.soil2.toFixed(1) : '--';
+            if (soil3) soil3.textContent = data.soil_moisture.soil3 ? data.soil_moisture.soil3.toFixed(1) : '--';
+            if (soil4) soil4.textContent = data.soil_moisture.soil4 ? data.soil_moisture.soil4.toFixed(1) : '--';
+        }
+        
+        // Update target displays
+        const settings = await apiCall('/api/climate/settings');
+        if (settings && !settings.error) {
+            const targetHumidityDisplay = document.getElementById('targetHumidityDisplay');
+            const targetTempDisplay = document.getElementById('targetTempDisplay');
+            if (targetHumidityDisplay) {
+                targetHumidityDisplay.textContent = settings.target_humidity ? settings.target_humidity + '%' : '--%';
+            }
+            if (targetTempDisplay) {
+                const targetTempF = settings.target_temp ? (settings.target_temp * 9/5 + 32).toFixed(0) : '--';
+                targetTempDisplay.textContent = targetTempF + '°F';
+            }
         }
     } else {
         updateConnectionStatus(false);

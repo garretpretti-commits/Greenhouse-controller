@@ -3,228 +3,599 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Greenhouse Controller</title>
+    <title>Greenhouse Monitor</title>
     <link rel="stylesheet" href="/static/css/style.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script>
+        // Inline test script to verify data is loading
+        function updateData() {
+            console.log('Fetching data...');
+            fetch('/api/sensors/current')
+                .then(response => response.json())
+                .then(data => {
+                    console.log('Data received:', data);
+                    // Update temperature
+                    const tempF = (data.temperature * 9/5 + 32).toFixed(0);
+                    document.getElementById('tempValue').textContent = tempF + '°';
+                    document.getElementById('tempCelsius').textContent = data.temperature.toFixed(1) + '°C';
+                    // Update humidity
+                    document.getElementById('humidityValue').textContent = data.humidity.toFixed(0) + '%';
+                    
+                    // Update target displays
+                    fetch('/api/climate/settings')
+                        .then(r => r.json())
+                        .then(settings => {
+                            if (settings && !settings.error) {
+                                const targetHumidityDisplay = document.getElementById('targetHumidityDisplay');
+                                const targetTempDisplay = document.getElementById('targetTempDisplay');
+                                if (targetHumidityDisplay) {
+                                    targetHumidityDisplay.textContent = settings.target_humidity + '%';
+                                }
+                                if (targetTempDisplay) {
+                                    const targetTempF = (settings.target_temp * 9/5 + 32).toFixed(0);
+                                    targetTempDisplay.textContent = targetTempF + '°F';
+                                }
+                            }
+                        });
+                })
+                .catch(error => console.error('Error:', error));
+        }
+        
+        function updateStatistics() {
+            fetch('/api/sensors/history?hours=24')
+                .then(response => response.json())
+                .then(data => {
+                    if (data && data.length > 0) {
+                        // Calculate statistics
+                        const temps = data.map(d => d.temperature);
+                        const humidities = data.map(d => d.humidity);
+                        
+                        const avgTemp = (temps.reduce((a, b) => a + b, 0) / temps.length * 9/5 + 32).toFixed(0);
+                        const minTemp = (Math.min(...temps) * 9/5 + 32).toFixed(0);
+                        const maxTemp = (Math.max(...temps) * 9/5 + 32).toFixed(0);
+                        const avgHumidity = (humidities.reduce((a, b) => a + b, 0) / humidities.length).toFixed(0);
+                        const minHumidity = Math.min(...humidities).toFixed(0);
+                        const maxHumidity = Math.max(...humidities).toFixed(0);
+                        
+                        // Update stat boxes
+                        const statBoxes = document.querySelectorAll('.stat-box .stat-value');
+                        if (statBoxes.length >= 6) {
+                            statBoxes[0].textContent = avgTemp + '°';
+                            statBoxes[1].textContent = minTemp + '°';
+                            statBoxes[2].textContent = maxTemp + '°';
+                            statBoxes[3].textContent = avgHumidity + '%';
+                            statBoxes[4].textContent = minHumidity + '%';
+                            statBoxes[5].textContent = maxHumidity + '%';
+                        }
+                    }
+                })
+                .catch(error => console.error('Stats error:', error));
+        }
+        
+        function updateChart() {
+            fetch('/api/sensors/history?hours=48')
+                .then(response => response.json())
+                .then(data => {
+                    if (data && data.length > 0) {
+                        const canvas = document.getElementById('historyChart');
+                        if (canvas && typeof Chart !== 'undefined') {
+                            const ctx = canvas.getContext('2d');
+                            
+                            // Prepare data
+                            const labels = data.map(d => {
+                                const date = new Date(d.timestamp * 1000);
+                                return date.toLocaleTimeString('en-US', {hour: 'numeric', minute: '2-digit'});
+                            });
+                            const temps = data.map(d => d.temperature * 9/5 + 32);
+                            const humidities = data.map(d => d.humidity);
+                            
+                            new Chart(ctx, {
+                                type: 'line',
+                                data: {
+                                    labels: labels,
+                                    datasets: [{
+                                        label: 'Temperature (°F)',
+                                        data: temps,
+                                        borderColor: 'rgb(237, 125, 49)',
+                                        backgroundColor: 'rgba(237, 125, 49, 0.1)',
+                                        yAxisID: 'y',
+                                    }, {
+                                        label: 'Humidity (%)',
+                                        data: humidities,
+                                        borderColor: 'rgb(91, 155, 213)',
+                                        backgroundColor: 'rgba(91, 155, 213, 0.1)',
+                                        yAxisID: 'y1',
+                                    }]
+                                },
+                                options: {
+                                    responsive: true,
+                                    interaction: {
+                                        mode: 'index',
+                                        intersect: false,
+                                    },
+                                    scales: {
+                                        y: {
+                                            type: 'linear',
+                                            display: true,
+                                            position: 'left',
+                                            title: {
+                                                display: true,
+                                                text: 'Temperature (°F)'
+                                            }
+                                        },
+                                        y1: {
+                                            type: 'linear',
+                                            display: true,
+                                            position: 'right',
+                                            title: {
+                                                display: true,
+                                                text: 'Humidity (%)'
+                                            },
+                                            grid: {
+                                                drawOnChartArea: false,
+                                            },
+                                        },
+                                    }
+                                }
+                            });
+                        }
+                    }
+                })
+                .catch(error => console.error('Chart error:', error));
+        }
+        
+        window.addEventListener('DOMContentLoaded', function() {
+            updateData();
+            updateStatistics();
+            updateChart();
+            loadPlants();
+            // Update every 5 seconds
+            setInterval(updateData, 5000);
+            // Update stats and chart every 2 minutes
+            setInterval(updateStatistics, 120000);
+            
+            // Plant form submission
+            document.getElementById('addPlantBtn').addEventListener('click', addPlant);
+            document.getElementById('clearPlantBtn').addEventListener('click', clearPlantForm);
+        });
+        
+        function loadPlants() {
+            console.log('Loading plants...');
+            fetch('/api/plants')
+                .then(response => response.json())
+                .then(plants => {
+                    console.log('Plants loaded:', plants);
+                    const plantList = document.getElementById('plantList');
+                    if (!plantList) {
+                        console.error('plantList element not found!');
+                        return;
+                    }
+                    if (plants && plants.length > 0) {
+                        plantList.innerHTML = plants.map(plant => `
+                            <div class="plant-item">
+                                <div style="display: flex; justify-content: space-between; align-items: start;">
+                                    <div>
+                                        <strong>${plant.strain_name}</strong> (${plant.plant_type})
+                                        ${plant.veg_start_date ? `<br>Veg: ${plant.veg_start_date}` : ''}
+                                        ${plant.flower_start_date ? ` | Flower: ${plant.flower_start_date}` : ''}
+                                        ${plant.dry_weight ? `<br>Yield: ${plant.dry_weight} lbs` : ''}
+                                        ${plant.notes ? `<br><small>${plant.notes}</small>` : ''}
+                                    </div>
+                                    <button class="btn btn-small btn-danger" onclick="window.deletePlant(${plant.id})">Delete</button>
+                                </div>
+                            </div>
+                        `).join('');
+                    } else {
+                        plantList.innerHTML = '<p>No plants added yet</p>';
+                    }
+                })
+                .catch(error => console.error('Error loading plants:', error));
+        }
+        
+        function addPlant() {
+            const data = {
+                strain_name: document.getElementById('strainName').value,
+                plant_type: document.getElementById('plantType').value,
+                veg_start_date: document.getElementById('vegStartDate').value,
+                flower_start_date: document.getElementById('flowerStartDate').value,
+                harvest_date: document.getElementById('harvestDate').value,
+                dry_weight: parseFloat(document.getElementById('dryWeight').value) || null,
+                notes: document.getElementById('plantNotes').value
+            };
+            
+            if (!data.strain_name || !data.plant_type) {
+                alert('Please enter strain name and type');
+                return;
+            }
+            
+            fetch('/api/plants', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(data)
+            })
+            .then(response => response.json())
+            .then(result => {
+                if (result.success) {
+                    alert('Plant added successfully!');
+                    clearPlantForm();
+                    loadPlants();
+                } else {
+                    alert('Error: ' + result.error);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Error adding plant');
+            });
+        }
+        
+        function clearPlantForm() {
+            document.getElementById('strainName').value = '';
+            document.getElementById('plantType').value = '';
+            document.getElementById('vegStartDate').value = '';
+            document.getElementById('flowerStartDate').value = '';
+            document.getElementById('harvestDate').value = '';
+            document.getElementById('dryWeight').value = '';
+            document.getElementById('plantNotes').value = '';
+        }
+        
+        function deletePlant(plantId) {
+            console.log('deletePlant called with ID:', plantId);
+            if (!confirm('Are you sure you want to delete this plant?')) {
+                return;
+            }
+            
+            console.log('Sending archive request for plant:', plantId);
+            fetch(`/api/plants/${plantId}/archive`, {
+                method: 'POST'
+            })
+            .then(response => response.json())
+            .then(result => {
+                console.log('Archive result:', result);
+                if (result.success) {
+                    loadPlants();
+                } else {
+                    alert('Error: ' + result.error);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Error deleting plant');
+            });
+        }
+        
+        // Make deletePlant globally accessible
+        window.deletePlant = deletePlant;
+    </script>
 </head>
 <body>
     <div class="container">
         <header>
-            <h1>🌱 Greenhouse Controller</h1>
-            <div class="connection-status">
-                <span id="connectionStatus" class="status-indicator offline">●</span>
-                <span id="connectionText">Connecting...</span>
-            </div>
+            <h1>🌱 Greenhouse Monitor</h1>
+            <div class="subtitle">Real-time environmental monitoring</div>
         </header>
 
-        <!-- Current Readings Section -->
-        <section class="dashboard-grid">
-            <div class="card">
+        <!-- Temperature and Humidity Cards -->
+        <section class="readings-grid">
+            <div class="card reading-card">
                 <div class="card-header">
                     <h2>🌡️ Temperature</h2>
                 </div>
                 <div class="card-body">
-                    <div class="reading-value">
-                        <span id="tempValue" class="value">--</span>
-                        <span class="unit">°C</span>
+                    <div class="large-value">
+                        <span id="tempValue">--</span>
                     </div>
-                    <div class="reading-label">Current</div>
+                    <div class="value-unit">FAHRENHEIT</div>
+                    <div class="value-secondary" id="tempCelsius">--</div>
                 </div>
             </div>
 
-            <div class="card">
+            <div class="card reading-card">
                 <div class="card-header">
                     <h2>💧 Humidity</h2>
                 </div>
                 <div class="card-body">
-                    <div class="reading-value">
-                        <span id="humidityValue" class="value">--</span>
-                        <span class="unit">%</span>
+                    <div class="large-value">
+                        <span id="humidityValue">--</span>
                     </div>
-                    <div class="reading-label">Current</div>
+                    <div class="value-unit">PERCENT</div>
+                    <div class="value-secondary">--</div>
                 </div>
             </div>
+        </section>
 
-            <div class="card soil-card">
-                <div class="card-header">
-                    <h2>🌿 Soil Moisture</h2>
+        <!-- Plant Tracker Section -->
+        <section class="card">
+            <div class="card-header clickable" onclick="toggleSection('plantTracker')">
+                <h2>🌿 Plant Tracker</h2>
+                <span class="expand-icon" id="plantTrackerIcon">▼</span>
+            </div>
+            <div class="card-body" id="plantTrackerContent">
+                <div class="section-header clickable" onclick="toggleSubSection('addPlant')">
+                    <div class="section-title">➕ Add New Plant</div>
+                    <span class="expand-icon" id="addPlantIcon">▼</span>
                 </div>
-                <div class="card-body">
-                    <div class="soil-grid">
-                        <div class="soil-reading">
-                            <div class="soil-label">Sensor 1</div>
-                            <div class="soil-value">
-                                <span id="soil1Value">--</span>%
-                            </div>
+                <div class="sub-section" id="addPlantContent">
+                    <div class="form-group">
+                        <label>Strain Name *</label>
+                        <input type="text" id="strainName" class="form-input" placeholder="e.g., Blue Dream">
+                    </div>
+                    <div class="form-group">
+                        <label>Type *</label>
+                        <select id="plantType" class="form-input">
+                            <option value="">-- Select Type --</option>
+                            <option value="Indica">Indica</option>
+                            <option value="Sativa">Sativa</option>
+                            <option value="Hybrid">Hybrid</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Veg Start Date</label>
+                        <input type="date" id="vegStartDate" class="form-input">
+                    </div>
+                    <div class="form-group">
+                        <label>Flower Start Date</label>
+                        <input type="date" id="flowerStartDate" class="form-input">
+                    </div>
+                    <div class="form-group">
+                        <label>Harvest Date</label>
+                        <input type="date" id="harvestDate" class="form-input">
+                    </div>
+                    <div class="form-group">
+                        <label>Dry Weight (lbs)</label>
+                        <input type="number" id="dryWeight" class="form-input" placeholder="0.00" step="0.01">
+                    </div>
+                    <div class="form-group">
+                        <label>Notes</label>
+                        <textarea id="plantNotes" class="form-input" rows="3" placeholder="Add any notes about this plant..."></textarea>
+                    </div>
+                    <div class="button-group">
+                        <button id="addPlantBtn" class="btn btn-primary">Add Plant</button>
+                        <button id="clearPlantBtn" class="btn btn-secondary">Clear</button>
+                    </div>
+                </div>
+                
+                <!-- Plant List -->
+                <div style="margin-top: 20px;">
+                    <h3>Your Plants</h3>
+                    <div id="plantList"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- System Status Section -->
+        <section class="card">
+            <div class="card-header">
+                <h2>⚙️ System Status</h2>
+            </div>
+            <div class="card-body">
+                <div class="relay-list">
+                    <div class="relay-item">
+                        <span>Humidifier</span>
+                    </div>
+                    <div class="relay-item">
+                        <span>Dehumidifier</span>
+                    </div>
+                    <div class="relay-item">
+                        <span>Heater</span>
+                    </div>
+                    <div class="relay-item">
+                        <span>Light</span>
+                    </div>
+                </div>
+
+                <div class="target-settings">
+                    <div class="target-row">
+                        <span class="target-label">Target Humidity: <strong id="targetHumidityDisplay">--%</strong></span>
+                    </div>
+                    <div class="target-input-group">
+                        <label>New Target:</label>
+                        <input type="number" class="inline-input" id="newTargetHumidity" placeholder="">
+                        <span>%</span>
+                        <button class="btn btn-small btn-primary">Set</button>
+                    </div>
+
+                    <div class="target-row" style="margin-top: 20px;">
+                        <span class="target-label">Target Temp: <strong id="targetTempDisplay">--°F</strong></span>
+                    </div>
+                    <div class="target-input-group">
+                        <label>New Temp:</label>
+                        <input type="number" class="inline-input" id="newTargetTemp" placeholder="">
+                        <span>°F</span>
+                        <button class="btn btn-small btn-orange">Set</button>
+                    </div>
+                </div>
+
+                <!-- Light Schedule -->
+                <div class="schedule-section">
+                    <h3>💡 Light Schedule</h3>
+                    <div class="schedule-inputs">
+                        <div class="schedule-row">
+                            <label>On:</label>
+                            <input type="number" class="time-input" placeholder="">
+                            <span>hours</span>
                         </div>
-                        <div class="soil-reading">
-                            <div class="soil-label">Sensor 2</div>
-                            <div class="soil-value">
-                                <span id="soil2Value">--</span>%
-                            </div>
+                        <div class="schedule-row">
+                            <label>Off:</label>
+                            <input type="number" class="time-input" placeholder="">
+                            <span>hours</span>
                         </div>
-                        <div class="soil-reading">
-                            <div class="soil-label">Sensor 3</div>
-                            <div class="soil-value">
-                                <span id="soil3Value">--</span>%
-                            </div>
+                        <div class="schedule-row">
+                            <label>Off at:</label>
+                            <input type="time" class="time-input" placeholder="">
                         </div>
-                        <div class="soil-reading">
-                            <div class="soil-label">Sensor 4</div>
-                            <div class="soil-value">
-                                <span id="soil4Value">--</span>%
-                            </div>
-                        </div>
+                        <button class="btn btn-yellow">Set Schedule</button>
                     </div>
                 </div>
             </div>
         </section>
 
-        <!-- Climate Control Section -->
-        <section class="control-section">
-            <div class="card">
-                <div class="card-header">
-                    <h2>⚙️ Climate Control</h2>
-                    <div class="mode-toggle">
-                        <button id="manualModeBtn" class="mode-btn active">Manual</button>
-                        <button id="autoModeBtn" class="mode-btn">Auto</button>
-                    </div>
-                </div>
-                <div class="card-body">
-                    <div id="manualControls" class="controls-grid">
-                        <div class="control-item">
-                            <label>
-                                <input type="checkbox" id="humidifierToggle" class="relay-toggle">
-                                <span class="control-label">💦 Humidifier</span>
-                            </label>
-                        </div>
-                        <div class="control-item">
-                            <label>
-                                <input type="checkbox" id="dehumidifierToggle" class="relay-toggle">
-                                <span class="control-label">🌬️ Dehumidifier</span>
-                            </label>
-                        </div>
-                        <div class="control-item">
-                            <label>
-                                <input type="checkbox" id="heaterToggle" class="relay-toggle">
-                                <span class="control-label">🔥 Heater</span>
-                            </label>
-                        </div>
-                    </div>
-
-                    <div id="autoControls" class="auto-controls hidden">
-                        <div class="setting-group">
-                            <label>Target Temperature (°C)</label>
-                            <div class="input-group">
-                                <input type="number" id="targetTemp" step="0.5" value="22">
-                                <span>±</span>
-                                <input type="number" id="tempTolerance" step="0.1" value="1">
-                            </div>
-                        </div>
-                        <div class="setting-group">
-                            <label>Target Humidity (%)</label>
-                            <div class="input-group">
-                                <input type="number" id="targetHumidity" step="1" value="60">
-                                <span>±</span>
-                                <input type="number" id="humidityTolerance" step="1" value="5">
-                            </div>
-                        </div>
-                        <button id="saveSettingsBtn" class="btn btn-primary">Save Settings</button>
-                    </div>
-                </div>
+        <!-- Soil Moisture & Watering -->
+        <section class="card">
+            <div class="card-header">
+                <h2>🌧️ Soil Moisture & Watering</h2>
+                <button class="btn btn-refresh" onclick="refreshSoil()">Refresh</button>
             </div>
-
-            <!-- Light Control Section -->
-            <div class="card">
-                <div class="card-header">
-                    <h2>💡 Light Control</h2>
-                    <div class="mode-toggle">
-                        <button id="lightManualBtn" class="mode-btn active">Manual</button>
-                        <button id="lightScheduleBtn" class="mode-btn">Schedule</button>
-                    </div>
+            <div class="card-body">
+                <div id="soilLoading">Loading moisture sensors...</div>
+                <h3>Moisture History (All Sensors)</h3>
+                <div class="chart-container" id="soilChartContainer"></div>
+                
+                <!-- Watering Controls -->
+                <div class="section-header clickable" onclick="toggleSubSection('wateringControls')">
+                    <div class="section-title">Watering Controls</div>
+                    <span class="expand-icon" id="wateringControlsIcon">▼</span>
                 </div>
-                <div class="card-body">
-                    <div id="lightManualControl" class="controls-grid">
-                        <div class="control-item">
-                            <label>
-                                <input type="checkbox" id="lightToggle" class="relay-toggle">
-                                <span class="control-label">💡 Grow Light</span>
-                            </label>
-                        </div>
+                <div class="sub-section collapsed" id="wateringControlsContent">
+                    <h4>Set Threshold</h4>
+                    <div class="form-group">
+                        <label>Sensor</label>
+                        <select class="form-input">
+                            <option>Sensor 1</option>
+                            <option>Sensor 2</option>
+                            <option>Sensor 3</option>
+                            <option>Sensor 4</option>
+                        </select>
                     </div>
+                    <div class="form-group">
+                        <label>Min Moisture</label>
+                        <input type="number" class="form-input" placeholder="e.g., 30">
+                    </div>
+                    <div class="form-group">
+                        <label>Link to Plant</label>
+                        <select class="form-input">
+                            <option>Select plant...</option>
+                        </select>
+                    </div>
+                    <button class="btn btn-primary">Save Target</button>
 
-                    <div id="lightScheduleControl" class="auto-controls hidden">
-                        <div class="setting-group">
-                            <label>Light ON Time</label>
-                            <input type="time" id="lightOnTime" value="06:00">
-                        </div>
-                        <div class="setting-group">
-                            <label>Light OFF Time</label>
-                            <input type="time" id="lightOffTime" value="22:00">
-                        </div>
-                        <button id="saveLightScheduleBtn" class="btn btn-primary">Save Schedule</button>
+                    <h4 style="margin-top: 30px;">Manual Watering</h4>
+                    <div class="form-group">
+                        <label>Sensor</label>
+                        <select class="form-input">
+                            <option>Sensor 1</option>
+                            <option>Sensor 2</option>
+                            <option>Sensor 3</option>
+                            <option>Sensor 4</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Duration (sec)</label>
+                        <input type="number" class="form-input" placeholder="e.g., 10">
+                    </div>
+                    <div class="form-group">
+                        <label>Note</label>
+                        <input type="text" class="form-input" placeholder="Optional details">
+                    </div>
+                    <div class="button-group">
+                        <button class="btn btn-secondary">Trigger</button>
+                        <button class="btn btn-primary">Recommend Time</button>
                     </div>
                 </div>
             </div>
         </section>
 
-        <!-- Charts Section -->
-        <section class="charts-section">
-            <div class="card chart-card">
-                <div class="card-header">
-                    <h2>📊 Temperature & Humidity History</h2>
-                    <select id="timeRange" class="time-range-select">
-                        <option value="1">Last Hour</option>
-                        <option value="6">Last 6 Hours</option>
-                        <option value="24" selected>Last 24 Hours</option>
-                        <option value="72">Last 3 Days</option>
-                    </select>
-                </div>
-                <div class="card-body">
-                    <canvas id="climateChart"></canvas>
-                </div>
+        <!-- Flow Meters -->
+        <section class="card">
+            <div class="card-header">
+                <h2>🚰 Flow Meters</h2>
             </div>
+            <div class="card-body">
+                <div>Loading meters...</div>
+            </div>
+        </section>
 
-            <div class="card chart-card">
-                <div class="card-header">
-                    <h2>🌿 Soil Moisture History</h2>
-                </div>
-                <div class="card-body">
-                    <canvas id="soilChart"></canvas>
+        <!-- Historical Data -->
+        <section class="card">
+            <div class="card-header">
+                <h2>📈 Historical Data (48h)</h2>
+            </div>
+            <div class="card-body chart-body">
+                <canvas id="historyChart"></canvas>
+            </div>
+        </section>
+
+        <!-- 24h Statistics -->
+        <section class="card">
+            <div class="card-header">
+                <h2>📊 24h Statistics</h2>
+            </div>
+            <div class="card-body">
+                <div class="stats-grid">
+                    <div class="stat-box">
+                        <div class="stat-value">--</div>
+                        <div class="stat-label">Avg Temp (°F)</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-value">--</div>
+                        <div class="stat-label">Min Temp (°F)</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-value">--</div>
+                        <div class="stat-label">Max Temp (°F)</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-value">--</div>
+                        <div class="stat-label">Avg Humidity</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-value">--</div>
+                        <div class="stat-label">Min Humidity</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-value">--</div>
+                        <div class="stat-label">Max Humidity</div>
+                    </div>
                 </div>
             </div>
         </section>
 
-        <!-- Status Section -->
-        <section class="status-section">
-            <div class="card">
-                <div class="card-header">
-                    <h2>📋 System Status</h2>
-                </div>
-                <div class="card-body">
-                    <div class="status-grid">
-                        <div class="status-item">
-                            <span class="status-label">Board 1:</span>
-                            <span id="board1Status" class="status-value">--</span>
-                        </div>
-                        <div class="status-item">
-                            <span class="status-label">Last Update:</span>
-                            <span id="lastUpdate" class="status-value">--</span>
-                        </div>
-                        <div class="status-item">
-                            <span class="status-label">Climate Mode:</span>
-                            <span id="climateModeStatus" class="status-value">--</span>
-                        </div>
-                        <div class="status-item">
-                            <span class="status-label">Light Mode:</span>
-                            <span id="lightModeStatus" class="status-value">--</span>
-                        </div>
-                    </div>
+        <!-- Live Camera -->
+        <section class="card">
+            <div class="card-header">
+                <h2>📷 Live Camera</h2>
+            </div>
+            <div class="card-body">
+                <div class="camera-placeholder">
+                    <p>Stream unavailable</p>
+                    <div class="camera-icon">▶️</div>
                 </div>
             </div>
         </section>
     </div>
 
-    <script src="/static/js/dashboard.js"></script>
+    <script src="/static/js/dashboard.js?v=2"></script>
+    <script>
+        function toggleSection(sectionId) {
+            const content = document.getElementById(sectionId + 'Content');
+            const icon = document.getElementById(sectionId + 'Icon');
+            if (content.style.display === 'none') {
+                content.style.display = 'block';
+                icon.textContent = '▼';
+            } else {
+                content.style.display = 'none';
+                icon.textContent = '▶';
+            }
+        }
+
+        function toggleSubSection(sectionId) {
+            const content = document.getElementById(sectionId + 'Content');
+            const icon = document.getElementById(sectionId + 'Icon');
+            if (content.classList.contains('collapsed')) {
+                content.classList.remove('collapsed');
+                icon.textContent = '▲';
+            } else {
+                content.classList.add('collapsed');
+                icon.textContent = '▼';
+            }
+        }
+
+        function refreshSoil() {
+            document.getElementById('soilLoading').textContent = 'Refreshing...';
+            setTimeout(() => {
+                document.getElementById('soilLoading').textContent = 'Loading moisture sensors...';
+            }, 1000);
+        }
+    </script>
 </body>
 </html>
