@@ -22,7 +22,7 @@ import json
 import usb_cdc
 
 # Initialize DHT22 sensor
-dht_sensor = adafruit_dht.DHT22(board.GP13)
+dht_sensor = adafruit_dht.DHT22(board.GP13, use_pulseio=False)
 
 # Soil sensor data pins (analog)
 soil_data_pin1 = analogio.AnalogIn(board.GP27)  # Sensors 1 & 2
@@ -58,32 +58,14 @@ for relay in relays.values():
 serial = usb_cdc.data
 
 def read_dht22():
-    """Read temperature and humidity from DHT22 with error handling"""
+    """Read temperature and humidity from DHT22"""
     try:
         temperature = dht_sensor.temperature
         humidity = dht_sensor.humidity
-        
-        # Validate readings
-        if temperature is not None and humidity is not None:
-            # Check if readings are in reasonable range
-            if -40 <= temperature <= 80 and 0 <= humidity <= 100:
-                return {
-                    'temperature': round(temperature, 1),
-                    'humidity': round(humidity, 1),
-                    'status': 'ok'
-                }
-        
         return {
-            'temperature': None,
-            'humidity': None,
-            'status': 'invalid_reading'
-        }
-    except RuntimeError as e:
-        # DHT22 can timeout occasionally - this is normal
-        return {
-            'temperature': None,
-            'humidity': None,
-            'status': f'error: {str(e)}'
+            'temperature': round(temperature, 1) if temperature is not None else None,
+            'humidity': round(humidity, 1) if humidity is not None else None,
+            'status': 'ok'
         }
     except Exception as e:
         return {
@@ -121,6 +103,7 @@ def read_soil_moisture(sensor_num):
     
     # Convert to percentage (0-65535 raw to 0-100%)
     # Capacitive sensors: higher value = drier soil
+    # Adjust these calibration values based on your sensors
     moisture_percent = 100 - ((raw_value / 65535) * 100)
     
     return round(moisture_percent, 1)
