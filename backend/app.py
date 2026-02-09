@@ -37,6 +37,19 @@ def init_system():
     """Initialize hardware connections and controllers"""
     global climate_controller, light_scheduler, system_status
     
+    # Reset ML models on startup (fresh start each boot)
+    import os
+    import glob
+    models_dir = os.path.join(os.path.dirname(__file__), '..', 'models')
+    model_files = glob.glob(os.path.join(models_dir, '*.pkl'))
+    for model_file in model_files:
+        try:
+            os.remove(model_file)
+            print(f"Removed ML model: {os.path.basename(model_file)}")
+        except Exception as e:
+            print(f"Error removing {model_file}: {e}")
+    print("ML models reset for fresh training")
+    
     # Connect to RP2040 Board 1
     print("Connecting to RP2040 Board 1...")
     if board1.connect():
@@ -141,8 +154,14 @@ def api_get_relays():
         
         # Get current sensor data to determine why relays are in their state
         sensor_data = system_status.get('cached_sensor_data', {})
-        temp = sensor_data.get('temperature', 0)
-        humidity = sensor_data.get('humidity', 0)
+        temp = sensor_data.get('temperature')
+        humidity = sensor_data.get('humidity')
+        
+        # Use fallback values if sensor data is None
+        if temp is None:
+            temp = 20.0
+        if humidity is None:
+            humidity = 50.0
         
         # Get climate settings
         climate_status = climate_controller.get_status()
@@ -318,7 +337,8 @@ def api_climate_settings():
                 target_temp=data.get('target_temp'),
                 temp_tolerance=data.get('temp_tolerance'),
                 target_humidity=data.get('target_humidity'),
-                humidity_tolerance=data.get('humidity_tolerance')
+                humidity_tolerance=data.get('humidity_tolerance'),
+                use_ml=data.get('use_ml')
             )
             
             return jsonify({
@@ -403,6 +423,29 @@ def api_set_setting(key):
         db.set_setting(key, value)
         
         return jsonify({'success': True, 'key': key, 'value': value})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/system/restart', methods=['POST'])
+def api_restart_controller():
+    """Restart the greenhouse controller service"""
+    try:
+        import subprocess
+        import os
+        
+        # Disconnect from hardware before restart
+        if board1:
+            board1.disconnect()
+        
+        # Schedule restart after response is sent
+        def restart_service():
+            time.sleep(1)
+            os.system('sudo systemctl restart greenhouse.service')
+        
+        restart_thread = threading.Thread(target=restart_service, daemon=True)
+        restart_thread.start()
+        
+        return jsonify({'success': True, 'message': 'Controller restarting...'})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 

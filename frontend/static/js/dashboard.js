@@ -144,7 +144,7 @@ async function updateSensorData() {
         updateConnectionStatus(true);
         
         // Update temperature (convert to Fahrenheit)
-        const tempF = data.temperature ? (data.temperature * 9/5 + 32).toFixed(0) : '--';
+        const tempF = data.temperature ? (data.temperature * 9/5 + 32).toFixed(1) : '--';
         const tempC = data.temperature ? data.temperature.toFixed(1) : '--';
         console.log('Setting tempValue to:', tempF);
         document.getElementById('tempValue').textContent = tempF;
@@ -393,6 +393,9 @@ function initClimateChart() {
                     borderColor: '#f44336',
                     backgroundColor: 'rgba(244, 67, 54, 0.1)',
                     yAxisID: 'y',
+                    tension: 0.4,
+                    cubicInterpolationMode: 'monotone',
+                    pointRadius: 0,
                 },
                 {
                     label: 'Humidity (%)',
@@ -400,6 +403,9 @@ function initClimateChart() {
                     borderColor: '#2196F3',
                     backgroundColor: 'rgba(33, 150, 243, 0.1)',
                     yAxisID: 'y1',
+                    tension: 0.4,
+                    cubicInterpolationMode: 'monotone',
+                    pointRadius: 0,
                 }
             ]
         },

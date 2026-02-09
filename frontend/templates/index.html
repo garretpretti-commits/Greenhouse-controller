@@ -15,11 +15,25 @@
                 .then(data => {
                     console.log('Data received:', data);
                     // Update temperature
-                    const tempF = (data.temperature * 9/5 + 32).toFixed(0);
-                    document.getElementById('tempValue').textContent = tempF + '°';
-                    document.getElementById('tempCelsius').textContent = data.temperature.toFixed(1) + '°C';
+                    if (data.temperature !== null && data.temperature !== undefined) {
+                        const tempF = (data.temperature * 9/5 + 32).toFixed(1);
+                        document.getElementById('tempValue').textContent = tempF + '°';
+                        document.getElementById('tempCelsius').textContent = data.temperature.toFixed(1) + '°C';
+                        
+                        // Update last updated time
+                        const now = new Date();
+                        const timeStr = now.toLocaleTimeString('en-US', {hour: 'numeric', minute: '2-digit', second: '2-digit'});
+                        document.getElementById('tempLastUpdated').textContent = 'Updated: ' + timeStr;
+                    } else {
+                        document.getElementById('tempValue').textContent = '--';
+                        document.getElementById('tempCelsius').textContent = '--';
+                    }
                     // Update humidity
-                    document.getElementById('humidityValue').textContent = data.humidity.toFixed(0) + '%';
+                    if (data.humidity !== null && data.humidity !== undefined) {
+                        document.getElementById('humidityValue').textContent = data.humidity.toFixed(0) + '%';
+                    } else {
+                        document.getElementById('humidityValue').textContent = '--';
+                    }
                     
                     // Update soil moisture with disconnected sensor detection
                     if (data.soil_moisture) {
@@ -92,6 +106,20 @@
                     }
                 })
                 .catch(error => console.error('Stats error:', error));
+        }
+        
+        function updateCurrentTime() {
+            const now = new Date();
+            const timeStr = now.toLocaleString('en-US', {
+                weekday: 'short',
+                month: 'short', 
+                day: 'numeric',
+                hour: 'numeric',
+                minute: '2-digit',
+                second: '2-digit'
+            });
+            const elem = document.getElementById('currentTime');
+            if (elem) elem.textContent = timeStr;
         }
         
         function updateChart() {
@@ -423,133 +451,30 @@
             });
         }
         
-        // ML Functions
-        function updateMLStatus() {
-            fetch('/api/ml/status')
-                .then(response => response.json())
-                .then(data => {
-                    if (data.available) {
-                        const status = data.models_trained ? 'Models Trained' : 'Not Trained';
-                        const enabledText = data.enabled ? '(Enabled)' : '(Disabled)';
-                        document.getElementById('mlStatus').textContent = status + ' ' + enabledText;
-                        
-                        let details = '';
-                        if (data.models_trained) {
-                            const lastTrain = new Date(data.last_train_time * 1000);
-                            const now = new Date();
-                            const minsAgo = Math.floor((now - lastTrain) / 60000);
-                            details = `Predicting ${data.prediction_horizon_minutes}min ahead | Auto-retrain every 15min | Last: ${minsAgo}min ago`;
-                        } else {
-                            details = 'Train models to enable predictions';
-                        }
-                        document.getElementById('mlStatusDetails').textContent = details;
-                        
-                        // Update toggle button
-                        document.getElementById('toggleMlBtn').textContent = data.enabled ? 'Disable ML' : 'Enable ML';
-                        document.getElementById('toggleMlBtn').className = data.enabled ? 'btn btn-gray' : 'btn btn-primary';
-                        
-                        // Show prediction if trained
-                        if (data.models_trained && data.enabled) {
-                            updateMLPrediction();
-                        }
-                    }
-                })
-                .catch(error => console.error('Error loading ML status:', error));
-        }
-        
-        function updateMLPrediction() {
-            fetch('/api/ml/predict')
-                .then(response => response.json())
-                .then(data => {
-                    if (data.success && data.prediction) {
-                        const pred = data.prediction;
-                        const tempF = (pred.predicted_temp * 9/5 + 32).toFixed(1);
-                        const text = `Temp: ${tempF}°F (${pred.temp_change > 0 ? '+' : ''}${pred.temp_change.toFixed(1)}°C), Humidity: ${pred.predicted_humidity.toFixed(1)}% (${pred.humidity_change > 0 ? '+' : ''}${pred.humidity_change.toFixed(1)}%)`;
-                        document.getElementById('mlPredictionText').textContent = text;
-                        document.getElementById('mlPrediction').style.display = 'block';
-                    }
-                })
-                .catch(error => console.error('Error loading ML prediction:', error));
-        }
-        
-        function trainML() {
-            if (!confirm('Train ML models with current data? This may take 10-30 seconds.')) {
+        function restartController() {
+            if (!confirm('Restart the greenhouse controller? This will disconnect sensors briefly.')) {
                 return;
             }
             
-            document.getElementById('trainMlBtn').disabled = true;
-            document.getElementById('trainMlBtn').textContent = 'Training...';
-            
-            fetch('/api/ml/train', {
-                method: 'POST'
+            fetch('/api/system/restart', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'}
             })
             .then(response => response.json())
             .then(result => {
                 if (result.success) {
-                    alert('ML training started. Check status in a few seconds.');
-                    setTimeout(updateMLStatus, 3000);
+                    alert('Controller restarting... The page will refresh in 10 seconds.');
+                    setTimeout(() => {
+                        location.reload();
+                    }, 10000);
                 } else {
                     alert('Error: ' + result.error);
                 }
             })
             .catch(error => {
-                alert('Error training ML models');
                 console.error('Error:', error);
-            })
-            .finally(() => {
-                document.getElementById('trainMlBtn').disabled = false;
-                document.getElementById('trainMlBtn').textContent = 'Train Models';
+                alert('Error restarting controller');
             });
-        }
-        
-        function resetML() {
-            if (!confirm('Reset ML models? This will delete all trained data. You will need to retrain after making changes to your greenhouse setup.')) {
-                return;
-            }
-            
-            fetch('/api/ml/reset', {
-                method: 'POST'
-            })
-            .then(response => response.json())
-            .then(result => {
-                if (result.success) {
-                    alert('ML models reset successfully. Train with new data when ready.');
-                    updateMLStatus();
-                } else {
-                    alert('Error: ' + result.error);
-                }
-            })
-            .catch(error => {
-                alert('Error resetting ML models');
-                console.error('Error:', error);
-            });
-        }
-        
-        function toggleML() {
-            fetch('/api/ml/status')
-                .then(response => response.json())
-                .then(data => {
-                    const newState = !data.enabled;
-                    
-                    return fetch('/api/ml/toggle', {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({
-                            enabled: newState
-                        })
-                    });
-                })
-                .then(response => response.json())
-                .then(result => {
-                    if (result.success) {
-                        updateMLStatus();
-                        alert('ML predictions ' + (result.ml_enabled ? 'enabled' : 'disabled'));
-                    }
-                })
-                .catch(error => {
-                    alert('Error toggling ML');
-                    console.error('Error:', error);
-                });
         }
         
         window.addEventListener('DOMContentLoaded', function() {
@@ -560,14 +485,14 @@
             loadPlants();
             updateRelayStatus();
             updateLightSchedule();
-            updateMLStatus();
+            updateCurrentTime();
             // Update every 5 seconds
             setInterval(updateData, 5000);
             setInterval(updateRelayStatus, 5000);
+            // Update current time every second
+            setInterval(updateCurrentTime, 1000);
             // Update stats and chart every 2 minutes
             setInterval(updateStatistics, 120000);
-            // Update ML status every 30 seconds
-            setInterval(updateMLStatus, 30000);
             
             // Plant form submission
             document.getElementById('addPlantBtn').addEventListener('click', addPlant);
@@ -580,10 +505,8 @@
             document.getElementById('setHumidityBtn').addEventListener('click', setTargetHumidity);
             document.getElementById('setTempBtn').addEventListener('click', setTargetTemp);
             
-            // ML control buttons
-            document.getElementById('trainMlBtn').addEventListener('click', trainML);
-            document.getElementById('resetMlBtn').addEventListener('click', resetML);
-            document.getElementById('toggleMlBtn').addEventListener('click', toggleML);
+            // System control button
+            document.getElementById('restartControllerBtn').addEventListener('click', restartController);
         });
         
         function loadPlants() {
@@ -598,20 +521,41 @@
                         return;
                     }
                     if (plants && plants.length > 0) {
-                        plantList.innerHTML = plants.map(plant => `
+                        plantList.innerHTML = plants.map(plant => {
+                            // Calculate days since veg and flower start
+                            let vegDays = '';
+                            let flowerDays = '';
+                            const now = new Date();
+                            
+                            if (plant.veg_start_date) {
+                                const vegStart = new Date(plant.veg_start_date);
+                                // If flowering, calculate veg days up to flower start, otherwise to now
+                                const vegEnd = plant.flower_start_date ? new Date(plant.flower_start_date) : now;
+                                const days = Math.floor((vegEnd - vegStart) / (1000 * 60 * 60 * 24));
+                                vegDays = `<br>Veg: ${days} days`;
+                            }
+                            
+                            if (plant.flower_start_date) {
+                                const flowerStart = new Date(plant.flower_start_date);
+                                const days = Math.floor((now - flowerStart) / (1000 * 60 * 60 * 24));
+                                flowerDays = ` | Flower: ${days} days`;
+                            }
+                            
+                            return `
                             <div class="plant-item">
                                 <div style="display: flex; justify-content: space-between; align-items: start;">
                                     <div>
                                         <strong>${plant.strain_name}</strong> (${plant.plant_type})
-                                        ${plant.veg_start_date ? `<br>Veg: ${plant.veg_start_date}` : ''}
-                                        ${plant.flower_start_date ? ` | Flower: ${plant.flower_start_date}` : ''}
+                                        ${vegDays}
+                                        ${flowerDays}
                                         ${plant.dry_weight ? `<br>Yield: ${plant.dry_weight} lbs` : ''}
                                         ${plant.notes ? `<br><small>${plant.notes}</small>` : ''}
                                     </div>
                                     <button class="btn btn-small btn-danger" onclick="window.deletePlant(${plant.id})">Delete</button>
                                 </div>
                             </div>
-                        `).join('');
+                            `;
+                        }).join('');
                     } else {
                         plantList.innerHTML = '<p>No plants added yet</p>';
                     }
@@ -698,8 +642,14 @@
 <body>
     <div class="container">
         <header>
-            <h1>🌱 Greenhouse Monitor</h1>
-            <div class="subtitle">Real-time environmental monitoring</div>
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                    <div id="currentTime" style="font-size: 0.9em; color: white; margin-bottom: 5px; margin-left: -20px;"></div>
+                    <h1>🌱 Greenhouse Monitor</h1>
+                    <div class="subtitle">Real-time environmental monitoring</div>
+                </div>
+                <button class="btn btn-small btn-orange" id="restartControllerBtn" style="font-size: 0.8em; padding: 8px 12px;">🔄 Restart</button>
+            </div>
         </header>
 
         <!-- Temperature and Humidity Cards -->
@@ -707,6 +657,7 @@
             <div class="card reading-card">
                 <div class="card-header">
                     <h2>🌡️ Temperature</h2>
+                    <div id="tempLastUpdated" style="font-size: 0.75em; color: #888;"></div>
                 </div>
                 <div class="card-body">
                     <div class="large-value">
@@ -727,32 +678,6 @@
                     </div>
                     <div class="value-unit">PERCENT</div>
                     <div class="value-secondary">--</div>
-                </div>
-            </div>
-        </section>
-
-        <!-- Machine Learning Section -->
-        <section class="card">
-            <div class="card-header">
-                <h2>🤖 Machine Learning</h2>
-            </div>
-            <div class="card-body">
-                <div class="ml-status" style="margin-bottom: 15px;">
-                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 10px; background: rgba(255,255,255,0.3); border-radius: 6px;">
-                        <div>
-                            <strong>Status:</strong> <span id="mlStatus">--</span><br>
-                            <small id="mlStatusDetails">--</small>
-                        </div>
-                        <button class="btn btn-small btn-primary" id="trainMlBtn">Train Models</button>
-                    </div>
-                </div>
-                <div class="ml-controls" style="display: flex; gap: 10px; flex-wrap: wrap;">
-                    <button class="btn btn-orange" id="resetMlBtn">Reset ML Data</button>
-                    <button class="btn btn-gray" id="toggleMlBtn">Disable ML</button>
-                </div>
-                <div id="mlPrediction" style="margin-top: 15px; padding: 10px; background: rgba(255,255,255,0.2); border-radius: 6px; display: none;">
-                    <strong>Current Prediction (10min ahead):</strong><br>
-                    <small id="mlPredictionText">--</small>
                 </div>
             </div>
         </section>
