@@ -404,6 +404,41 @@ def api_light_schedule():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/temp/schedule', methods=['GET', 'POST'])
+def api_temp_schedule():
+    """Get or set temperature schedule"""
+    try:
+        if request.method == 'GET':
+            schedule = db.get_temp_schedule()
+            return jsonify(schedule if schedule else {'enabled': False, 'periods': []})
+        
+        elif request.method == 'POST':
+            data = request.get_json()
+            periods = data.get('periods', [])
+            enabled = data.get('enabled', True)
+            
+            if not periods or len(periods) == 0:
+                return jsonify({'error': 'At least one period required'}), 400
+            
+            if len(periods) > 4:
+                return jsonify({'error': 'Maximum 4 periods allowed'}), 400
+            
+            # Validate periods
+            for period in periods:
+                if 'time' not in period or 'temperature' not in period:
+                    return jsonify({'error': 'Each period needs time and temperature'}), 400
+            
+            db.set_temp_schedule(periods, enabled)
+            climate_controller.load_settings()  # Reload settings to pick up new schedule
+            
+            return jsonify({
+                'success': True,
+                'schedule': db.get_temp_schedule()
+            })
+    
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/settings', methods=['GET'])
 def api_get_settings():
     """Get all settings"""

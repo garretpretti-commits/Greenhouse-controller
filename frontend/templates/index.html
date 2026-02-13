@@ -123,7 +123,7 @@
         }
         
         function updateChart() {
-            fetch('/api/sensors/history?hours=48')
+            fetch('/api/sensors/history?hours=24')
                 .then(response => response.json())
                 .then(data => {
                     if (data && data.length > 0) {
@@ -195,7 +195,7 @@
         }
         
         function updateSoilChart() {
-            fetch('/api/sensors/history?hours=48')
+            fetch('/api/sensors/history?hours=24')
                 .then(response => response.json())
                 .then(data => {
                     if (data && data.length > 0) {
@@ -417,40 +417,6 @@
             });
         }
         
-        function setTargetTemp() {
-            const tempF = parseFloat(document.getElementById('newTargetTemp').value);
-            
-            if (!tempF || tempF < 32 || tempF > 110) {
-                alert('Please enter a valid temperature (32-110°F)');
-                return;
-            }
-            
-            // Convert Fahrenheit to Celsius for the API
-            const tempC = (tempF - 32) * 5/9;
-            
-            fetch('/api/climate/settings', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({
-                    target_temp: tempC
-                })
-            })
-            .then(response => response.json())
-            .then(result => {
-                if (result.success) {
-                    document.getElementById('targetTempDisplay').textContent = tempF + '°F';
-                    document.getElementById('newTargetTemp').value = '';
-                    alert('Target temperature updated to ' + tempF + '°F');
-                } else {
-                    alert('Error: ' + result.error);
-                }
-            })
-            .catch(error => {
-                console.error('Error:', error);
-                alert('Error setting target temperature');
-            });
-        }
-        
         function restartController() {
             if (!confirm('Restart the greenhouse controller? This will disconnect sensors briefly.')) {
                 return;
@@ -474,6 +440,112 @@
             .catch(error => {
                 console.error('Error:', error);
                 alert('Error restarting controller');
+            });
+        }
+
+        // Temperature Schedule Functions
+        let tempPeriodCount = 0;
+
+        function loadTempSchedule() {
+            fetch('/api/temp/schedule')
+                .then(response => response.json())
+                .then(data => {
+                    const enabled = data.enabled || false;
+                    document.getElementById('tempScheduleEnabled').checked = enabled;
+                    
+                    const periods = data.periods || [];
+                    const container = document.getElementById('tempSchedulePeriods');
+                    container.innerHTML = '';
+                    tempPeriodCount = 0;
+                    
+                    if (periods.length > 0) {
+                        periods.forEach(period => {
+                            // Convert C to F for display
+                            const tempF = Math.round(period.temperature * 9/5 + 32);
+                            addTempPeriod(period.time, tempF);
+                        });
+                    } else {
+                        // Add one default period (75°F)
+                        addTempPeriod('06:00', 75);
+                    }
+                })
+                .catch(error => console.error('Error loading temp schedule:', error));
+        }
+
+        function addTempPeriod(time = '', temp = '') {
+            if (tempPeriodCount >= 4) {
+                alert('Maximum 4 periods allowed');
+                return;
+            }
+            
+            const container = document.getElementById('tempSchedulePeriods');
+            const periodDiv = document.createElement('div');
+            periodDiv.className = 'schedule-row';
+            periodDiv.style.display = 'flex';
+            periodDiv.style.gap = '10px';
+            periodDiv.style.alignItems = 'center';
+            periodDiv.style.marginBottom = '10px';
+            periodDiv.innerHTML = `
+                <label>Time:</label>
+                <input type="time" class="time-input temp-time" value="${time}" style="width: 120px;">
+                <label>Temp:</label>
+                <input type="number" class="inline-input temp-value" value="${temp}" step="1" min="50" max="95" style="width: 80px;">
+                <span>°F</span>
+                <button class="btn btn-small btn-danger" onclick="this.parentElement.remove(); tempPeriodCount--;">Remove</button>
+            `;
+            container.appendChild(periodDiv);
+            tempPeriodCount++;
+        }
+
+        function saveTempSchedule() {
+            const enabled = document.getElementById('tempScheduleEnabled').checked;
+            const timeInputs = document.querySelectorAll('.temp-time');
+            const tempInputs = document.querySelectorAll('.temp-value');
+            
+            const periods = [];
+            for (let i = 0; i < timeInputs.length; i++) {
+                const time = timeInputs[i].value;
+                const tempF = parseFloat(tempInputs[i].value);
+                
+                if (!time || isNaN(tempF)) {
+                    alert('Please fill in all time and temperature values');
+                    return;
+                }
+                
+                // Convert F to C for the API
+                const tempC = (tempF - 32) * 5/9;
+                
+                periods.push({
+                    time: time,
+                    temperature: tempC
+                });
+            }
+            
+            if (periods.length === 0) {
+                alert('Please add at least one temperature period');
+                return;
+            }
+            
+            fetch('/api/temp/schedule', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    enabled: enabled,
+                    periods: periods
+                })
+            })
+            .then(response => response.json())
+            .then(result => {
+                if (result.success) {
+                    alert('Temperature schedule saved!');
+                    loadTempSchedule();
+                } else {
+                    alert('Error: ' + (result.error || 'Unknown error'));
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Error saving temperature schedule');
             });
         }
         
@@ -501,9 +573,13 @@
             // Light schedule button
             document.getElementById('setScheduleBtn').addEventListener('click', setLightSchedule);
             
+            // Temperature schedule buttons
+            document.getElementById('addPeriodBtn').addEventListener('click', addTempPeriod);
+            document.getElementById('saveTempScheduleBtn').addEventListener('click', saveTempSchedule);
+            loadTempSchedule();
+            
             // Climate control buttons
             document.getElementById('setHumidityBtn').addEventListener('click', setTargetHumidity);
-            document.getElementById('setTempBtn').addEventListener('click', setTargetTemp);
             
             // System control button
             document.getElementById('restartControllerBtn').addEventListener('click', restartController);
@@ -790,13 +866,8 @@
                     </div>
 
                     <div class="target-row" style="margin-top: 20px;">
-                        <span class="target-label">Target Temp: <strong id="targetTempDisplay">--°F</strong></span>
-                    </div>
-                    <div class="target-input-group">
-                        <label>New Temp:</label>
-                        <input type="number" class="inline-input" id="newTargetTemp" placeholder="">
-                        <span>°F</span>
-                        <button class="btn btn-small btn-orange" id="setTempBtn">Set</button>
+                        <span class="target-label">Current Target Temp: <strong id="targetTempDisplay">--°F</strong></span>
+                        <div style="font-size: 0.85em; color: #666; margin-top: 5px;">Use Temperature Schedule below to set targets</div>
                     </div>
                 </div>
 
@@ -825,6 +896,23 @@
                         </div>
                         <button class="btn btn-yellow" id="setScheduleBtn">Set Schedule</button>
                     </div>
+                </div>
+
+                <!-- Temperature Schedule -->
+                <div class="schedule-section" style="margin-top: 30px;">
+                    <h3>🌡️ Temperature Schedule</h3>
+                    <div style="margin-bottom: 15px;">
+                        <label style="display: flex; align-items: center; gap: 8px;">
+                            <input type="checkbox" id="tempScheduleEnabled" style="width: auto;">
+                            <span>Enable Dynamic Temperature Schedule</span>
+                        </label>
+                        <div style="font-size: 0.85em; color: #666; margin-top: 5px;">Set up to 4 temperature periods throughout the day</div>
+                    </div>
+                    <div id="tempSchedulePeriods">
+                        <!-- Periods will be added here dynamically -->
+                    </div>
+                    <button class="btn btn-secondary" id="addPeriodBtn" style="margin-top: 10px;">+ Add Period</button>
+                    <button class="btn btn-orange" id="saveTempScheduleBtn" style="margin-top: 10px;">Save Temperature Schedule</button>
                 </div>
             </div>
         </section>

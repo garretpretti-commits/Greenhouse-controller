@@ -73,6 +73,17 @@ class GreenhouseDB:
                 )
             ''')
             
+            # Temperature schedule table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS temp_schedule (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    time TEXT NOT NULL,
+                    temperature REAL NOT NULL,
+                    sort_order INTEGER NOT NULL
+                )
+            ''')
+            
             # Plants table
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS plants (
@@ -192,29 +203,39 @@ class GreenhouseDB:
         return None
     
     def get_sensor_history(self, hours: int = 24) -> List[Dict[str, Any]]:
-        """Get sensor data for the last N hours"""
+        """Get sensor data for the last N hours, averaged over 10-minute intervals"""
         conn = self.get_connection()
         cursor = conn.cursor()
         
         cutoff_time = time.time() - (hours * 3600)
         
+        # Group by 30-minute intervals (1800 seconds) and average the values
         cursor.execute('''
-            SELECT * FROM sensor_data 
+            SELECT 
+                (timestamp / 1800) * 1800 as interval_start,
+                AVG(temperature) as temperature,
+                AVG(humidity) as humidity,
+                AVG(soil1) as soil1,
+                AVG(soil2) as soil2,
+                AVG(soil3) as soil3,
+                AVG(soil4) as soil4
+            FROM sensor_data 
             WHERE timestamp > ?
-            ORDER BY timestamp ASC
+            GROUP BY interval_start
+            ORDER BY interval_start ASC
         ''', (cutoff_time,))
         
         rows = cursor.fetchall()
         conn.close()
         
         return [{
-            'timestamp': row['timestamp'],
-            'temperature': row['temperature'],
-            'humidity': row['humidity'],
-            'soil1': row['soil1'],
-            'soil2': row['soil2'],
-            'soil3': row['soil3'],
-            'soil4': row['soil4']
+            'timestamp': row['interval_start'],
+            'temperature': round(row['temperature'], 1) if row['temperature'] is not None else None,
+            'humidity': round(row['humidity'], 1) if row['humidity'] is not None else None,
+            'soil1': round(row['soil1'], 1) if row['soil1'] is not None else None,
+            'soil2': round(row['soil2'], 1) if row['soil2'] is not None else None,
+            'soil3': round(row['soil3'], 1) if row['soil3'] is not None else None,
+            'soil4': round(row['soil4'], 1) if row['soil4'] is not None else None
         } for row in rows]
     
     def get_setting(self, key: str, default: Any = None) -> Any:
@@ -287,6 +308,44 @@ class GreenhouseDB:
                 'enabled': bool(row['enabled']),
                 'on_time': row['on_time'],
                 'off_time': row['off_time']
+            }
+        return None
+    
+    def set_temp_schedule(self, schedules: List[Dict[str, Any]], enabled: bool = True):
+        """Set temperature schedule (up to 4 time periods)"""
+        with self.lock:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            # Clear existing schedule
+            cursor.execute('DELETE FROM temp_schedule')
+            
+            # Insert new schedules
+            for i, schedule in enumerate(schedules[:4]):  # Max 4 periods
+                cursor.execute('''
+                    INSERT INTO temp_schedule (enabled, time, temperature, sort_order)
+                    VALUES (?, ?, ?, ?)
+                ''', (int(enabled), schedule['time'], schedule['temperature'], i))
+            
+            conn.commit()
+            conn.close()
+    
+    def get_temp_schedule(self) -> Optional[Dict[str, Any]]:
+        """Get temperature schedule"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT * FROM temp_schedule ORDER BY sort_order')
+        rows = cursor.fetchall()
+        conn.close()
+        
+        if rows and len(rows) > 0:
+            return {
+                'enabled': bool(rows[0]['enabled']),
+                'periods': [{
+                    'time': row['time'],
+                    'temperature': row['temperature']
+                } for row in rows]
             }
         return None
     

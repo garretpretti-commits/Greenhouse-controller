@@ -26,6 +26,8 @@ class RP2040Board:
         self.connected = False
         self.last_data = {}
         self.lock = threading.Lock()
+        self.null_reading_count = 0  # Track consecutive null temp readings
+        self.console_port = None  # Track console port for resets
     
     def find_port(self) -> Optional[str]:
         """Find the serial port for the RP2040 board"""

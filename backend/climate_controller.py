@@ -31,11 +31,15 @@ class ClimateController:
         self.target_humidity = 60.0
         self.humidity_tolerance = 5.0
         
+        # Temperature schedule
+        self.temp_schedule_enabled = False
+        self.temp_schedule = None
+        
         # Control state
         self.enabled = False
-        self.use_ml = True  # Enable ML predictions by default
-        self.last_action_time = 0
-        self.min_action_interval = 60  # Minimum seconds between actions
+        self.use_ml = False  # Disable ML by default - use simple control
+        self.last_action_time = time.time()
+        self.min_action_interval = 30  # Minimum seconds between actions
         
         # Adaptive duty cycling parameters
         self.relay_on_times = {}  # Track when each relay turned on
@@ -50,14 +54,10 @@ class ClimateController:
             'heater': None
         }
         
-        # ML predictor
+        # ML predictor - disabled for simplicity
         self.ml_predictor = None
-        if ML_AVAILABLE:
-            try:
-                self.ml_predictor = MLClimatePredictor(database)
-                print("ML Climate Predictor initialized")
-            except Exception as e:
-                print(f"Failed to initialize ML predictor: {e}")
+        # ML features disabled - using simple reactive control only
+        print("Using simple reactive climate control (ML disabled)")
         
         # Thread control
         self.control_thread = None
@@ -72,9 +72,46 @@ class ClimateController:
             self.temp_tolerance = float(self.db.get_setting('temp_tolerance', '0.5'))
             self.target_humidity = float(self.db.get_setting('target_humidity', '60.0'))
             self.humidity_tolerance = float(self.db.get_setting('humidity_tolerance', '5.0'))
-            self.use_ml = self.db.get_setting('use_ml', 'True').lower() == 'true'
+            self.use_ml = self.db.get_setting('use_ml', 'False').lower() == 'true'
+            
+            # Load temperature schedule
+            temp_schedule = self.db.get_temp_schedule()
+            if temp_schedule:
+                self.temp_schedule_enabled = temp_schedule['enabled']
+                self.temp_schedule = temp_schedule['periods']
+            
+            # Update target temp from schedule if enabled
+            if self.temp_schedule_enabled and self.temp_schedule:
+                scheduled_temp = self.get_scheduled_temperature()
+                if scheduled_temp is not None:
+                    self.target_temp = scheduled_temp
         except (ValueError, TypeError):
             print("Error loading settings, using defaults")
+    
+    def get_scheduled_temperature(self) -> Optional[float]:
+        """Get the current scheduled temperature based on time of day"""
+        if not self.temp_schedule or len(self.temp_schedule) == 0:
+            return None
+        
+        now = datetime.now()
+        current_time = now.strftime('%H:%M')
+        
+        # Sort periods by time
+        sorted_periods = sorted(self.temp_schedule, key=lambda x: x['time'])
+        
+        # Find the active period
+        active_temp = None
+        for i, period in enumerate(sorted_periods):
+            if current_time >= period['time']:
+                active_temp = period['temperature']
+            else:
+                break
+        
+        # If no period found, use the last period of the day (wraps to next day)
+        if active_temp is None and len(sorted_periods) > 0:
+            active_temp = sorted_periods[-1]['temperature']
+        
+        return active_temp
     
     def update_settings(self, target_temp: Optional[float] = None, 
                        temp_tolerance: Optional[float] = None,
@@ -105,7 +142,7 @@ class ClimateController:
     def calculate_control_actions(self, temperature: float, humidity: float, relay_states: Optional[Dict[str, bool]] = None) -> Dict[str, bool]:
         """
         Calculate required control actions based on sensor readings
-        Uses ML predictions if available for proactive control
+        Uses simple reactive control logic
         Returns dict with relay states for humidifier, dehumidifier, heater
         """
         actions = {
@@ -121,193 +158,65 @@ class ClimateController:
             except:
                 relay_states = actions.copy()
         
-        # Use ML prediction if available and enabled
-        prediction = None
-        if self.use_ml and self.ml_predictor and self.ml_predictor.temp_model is not None:
-            try:
-                current_data = {
-                    'temperature': temperature,
-                    'humidity': humidity
-                }
-                prediction = self.ml_predictor.predict(current_data, relay_states)
-                
-                if prediction:
-                    # Check if models need retraining
-                    if self.ml_predictor.should_retrain():
-                        print("Retraining ML models in background...")
-                        threading.Thread(target=self.ml_predictor.train_models, daemon=True).start()
-                
-            except Exception as e:
-                print(f"ML prediction error: {e}")
-                prediction = None
-        
-        # Temperature control with ML predictions
+        # Simple temperature control (no ML)
         temp_low = self.target_temp - self.temp_tolerance
         temp_high = self.target_temp + self.temp_tolerance
         
-        print(f"[CONTROL] Temp: {temperature:.1f}°C ({temperature*9/5+32:.1f}°F), Target: {self.target_temp:.1f}°C ({self.target_temp*9/5+32:.1f}°F), Low: {temp_low:.1f}°C, High: {temp_high:.1f}°C")
+        # Simple reactive control
+        if temperature < temp_low:
+            actions['heater'] = True
+            print(f"[CONTROL] Temp: {temperature:.1f}°C ({temperature*9/5+32:.1f}°F) < {temp_low:.1f}°C - Heater ON")
+        elif temperature >= self.target_temp:
+            actions['heater'] = False
+            if temperature > temp_high:
+                print(f"[CONTROL] Temp: {temperature:.1f}°C > {temp_high:.1f}°C - Heater OFF")
         
-        if prediction and self.use_ml:
-            # Predictive control: turn on heater if we predict temperature will drop below target
-            predicted_temp = prediction['predicted_temp']
-            
-            if predicted_temp < temp_low:
-                actions['heater'] = True
-            elif temperature > temp_high:
-                actions['heater'] = False
-            else:
-                # Within range, use prediction to decide
-                actions['heater'] = predicted_temp < self.target_temp
-        else:
-            # Basic reactive control
-            if temperature < temp_low:
-                actions['heater'] = True
-                print(f"[CONTROL] Heater ON: temp {temperature:.1f}°C < low threshold {temp_low:.1f}°C")
-            elif temperature > temp_high:
-                actions['heater'] = False
-                print(f"[CONTROL] Heater OFF: temp {temperature:.1f}°C > high threshold {temp_high:.1f}°C")
-        
-        # Humidity control with ML predictions
+        # Simple humidity control
         humidity_low = self.target_humidity - self.humidity_tolerance
         humidity_high = self.target_humidity + self.humidity_tolerance
         
-        if prediction and self.use_ml:
-            # Predictive control
-            predicted_humidity = prediction['predicted_humidity']
-            
-            if predicted_humidity < humidity_low:
-                actions['humidifier'] = True
-                actions['dehumidifier'] = False
-            elif predicted_humidity > humidity_high:
-                actions['humidifier'] = False
+        # Simple reactive control
+        if humidity < humidity_low:
+            actions['humidifier'] = True
+            actions['dehumidifier'] = False
+            print(f"[CONTROL] Humidity: {humidity:.1f}% < {humidity_low:.1f}% - Humidifier ON")
+        elif humidity >= self.target_humidity:
+            actions['humidifier'] = False
+            if humidity > humidity_high:
                 actions['dehumidifier'] = True
+                print(f"[CONTROL] Humidity: {humidity:.1f}% > {humidity_high:.1f}% - Dehumidifier ON")
             else:
-                # Within range, use prediction to decide
-                if predicted_humidity < self.target_humidity:
-                    actions['humidifier'] = True
-                    actions['dehumidifier'] = False
-                elif predicted_humidity > self.target_humidity:
-                    actions['humidifier'] = False
-                    actions['dehumidifier'] = True
-                else:
-                    actions['humidifier'] = False
-                    actions['dehumidifier'] = False
+                actions['dehumidifier'] = False
         else:
-            # Basic reactive control
-            if humidity < humidity_low:
-                actions['humidifier'] = True
-                actions['dehumidifier'] = False
-            elif humidity > humidity_high:
-                actions['humidifier'] = False
-                actions['dehumidifier'] = True
-            else:
-                actions['humidifier'] = False
-                actions['dehumidifier'] = False
+            actions['dehumidifier'] = False
         
         return actions
     
     def calculate_adaptive_cycle_times(self, temperature: float, humidity: float) -> Dict[str, Dict[str, float]]:
         """
-        Calculate adaptive on/off times based on distance from target and effectiveness
+        Simple fixed cycle times for reliable operation
         Returns dict with min_on_time and min_off_time for each relay
         """
-        cycle_times = {}
-        
-        # Heater cycle times
-        # Use default if target_temp is None
-        target_temp = self.target_temp if self.target_temp else 22.0
-        temp_diff = abs(target_temp - temperature)
-        temp_percent_off = (temp_diff / target_temp) * 100
-        
-        # Adaptive heater timing:
-        # Close to target (< 5% off): 10 min on, 20 min off
-        # Medium distance (5-15% off): 20 min on, 10 min off  
-        # Far from target (> 15% off): 30+ min on, 5 min off
-        if temp_percent_off < 5:
-            heater_on = 600  # 10 minutes
-            heater_off = 1200  # 20 minutes
-        elif temp_percent_off < 15:
-            heater_on = 1200  # 20 minutes
-            heater_off = 600   # 10 minutes
-        else:
-            # Scale up to 60 min for very far distances
-            heater_on = min(3600, 1800 + (temp_percent_off * 60))  # 30-60 minutes
-            heater_off = 300  # 5 minutes
-        
-        cycle_times['heater'] = {'min_on': heater_on, 'min_off': heater_off}
-        
-        # Humidifier cycle times
-        # Use default if target_humidity is None
-        target_humidity = self.target_humidity if self.target_humidity else 60.0
-        humidity_diff = abs(target_humidity - humidity)
-        humidity_percent_off = (humidity_diff / target_humidity) * 100
-        
-        # Adaptive humidifier timing:
-        if humidity_percent_off < 5:
-            humid_on = 600   # 10 minutes
-            humid_off = 1200  # 20 minutes
-        elif humidity_percent_off < 15:
-            humid_on = 1200  # 20 minutes
-            humid_off = 600   # 10 minutes
-        else:
-            humid_on = min(3600, 1800 + (humidity_percent_off * 60))  # 30-60 minutes
-            humid_off = 300  # 5 minutes
-        
-        cycle_times['humidifier'] = {'min_on': humid_on, 'min_off': humid_off}
-        
-        # Dehumidifier - similar to humidifier
-        cycle_times['dehumidifier'] = {'min_on': humid_on, 'min_off': humid_off}
+        # Simple fixed cycle times
+        # Minimum 3 minutes on, 2 minutes off for all devices
+        # This prevents rapid cycling while being responsive
+        cycle_times = {
+            'heater': {'min_on': 180, 'min_off': 120},        # 3 min on, 2 min off
+            'humidifier': {'min_on': 180, 'min_off': 120},    # 3 min on, 2 min off
+            'dehumidifier': {'min_on': 180, 'min_off': 120}   # 3 min on, 2 min off
+        }
         
         return cycle_times
     
     def check_relay_effectiveness(self, relay: str, temperature: float, humidity: float) -> bool:
         """
-        Check if a relay is being effective (making progress toward target)
-        Returns True if effective, False if wasting energy
+        Simple effectiveness check - always return True for simpler operation
+        Can be enhanced later if needed
         """
-        if relay not in self.last_sensor_values:
-            # No history yet, assume effective
-            return True
-        
-        last_values = self.last_sensor_values[relay]
-        time_running = time.time() - self.relay_on_times.get(relay, time.time())
-        
-        # Need at least 5 minutes of data to judge
-        if time_running < 300:
-            return True
-        
-        # Check progress based on relay type
-        if relay == 'heater':
-            last_temp = last_values.get('temperature', temperature)
-            temp_change = temperature - last_temp
-            # If we're trying to heat but temp is dropping, not effective
-            if temp_change <= 0 and temperature < self.target_temp:
-                return False
-            # If temp rising too slowly (< 0.1°C per 5 min), might not be effective
-            if temp_change < 0.1 and (self.target_temp - temperature) > 2:
-                return False
-                
-        elif relay == 'humidifier':
-            last_humidity = last_values.get('humidity', humidity)
-            humidity_change = humidity - last_humidity
-            # If we're trying to humidify but humidity dropping, not effective
-            if humidity_change <= 0 and humidity < self.target_humidity:
-                return False
-            # If humidity rising too slowly
-            if humidity_change < 0.5 and (self.target_humidity - humidity) > 10:
-                return False
-                
-        elif relay == 'dehumidifier':
-            last_humidity = last_values.get('humidity', humidity)
-            humidity_change = humidity - last_humidity
-            # If we're trying to dehumidify but humidity rising, not effective
-            if humidity_change >= 0 and humidity > self.target_humidity:
-                return False
-        
         return True
     
     def apply_control_actions(self, actions: Dict[str, bool], temperature: float = None, humidity: float = None) -> bool:
-        """Apply control actions to relays with adaptive duty cycling"""
+        """Apply control actions to relays with simple timing protection"""
         try:
             # Use provided sensor data or fetch it
             if temperature is None or humidity is None:
@@ -316,127 +225,95 @@ class ClimateController:
                     temperature = data.get('temperature', self.target_temp)
                     humidity = data.get('humidity', self.target_humidity)
                 except:
-                    # Fallback to targets if we can't get data
                     temperature = self.target_temp
                     humidity = self.target_humidity
             
-            # Calculate adaptive cycle times based on current conditions
+            # Get simple cycle times
             cycle_times = self.calculate_adaptive_cycle_times(temperature, humidity)
             
             current_time = time.time()
             modified_actions = actions.copy()
             
-            # Apply adaptive duty cycling
+            # Safety limits
+            MAX_RUNTIME = 3600  # 1 hour maximum
+            MIN_COOLDOWN = 600  # 10 minutes minimum cooldown after max runtime
+            
+            # Apply simple timing protection for each relay
             for relay in ['heater', 'humidifier', 'dehumidifier']:
                 desired_state = actions.get(relay, False)
                 current_state = self.last_relay_states.get(relay)
                 
+                # IMMEDIATE SHUTOFF if target reached
+                if current_state is True:
+                    should_shutoff = False
+                    if relay == 'heater' and temperature >= self.target_temp:
+                        should_shutoff = True
+                    elif relay == 'humidifier' and humidity >= self.target_humidity:
+                        should_shutoff = True
+                    elif relay == 'dehumidifier' and humidity <= self.target_humidity:
+                        should_shutoff = True
+                    
+                    if should_shutoff:
+                        modified_actions[relay] = False
+                        self.relay_off_times[relay] = current_time
+                        print(f"{relay.capitalize()} target reached, turning OFF")
+                        continue
+                
                 min_on = cycle_times[relay]['min_on']
                 min_off = cycle_times[relay]['min_off']
                 
-                # Safety limits for heater and humidifier
-                MAX_RUNTIME = 3600  # 1 hour maximum
-                MIN_COOLDOWN = 450  # 7.5 minutes minimum cooldown
+                # Safety: Check max runtime for heater and humidifier
+                if current_state is True and relay in ['heater', 'humidifier']:
+                    last_on = self.relay_on_times.get(relay, current_time)
+                    time_on = current_time - last_on
+                    
+                    if time_on >= MAX_RUNTIME:
+                        modified_actions[relay] = False
+                        self.relay_off_times[relay] = current_time
+                        print(f"{relay.capitalize()} SAFETY: Max runtime (1hr) reached, forcing OFF")
+                        continue
                 
-                # Check if we want to turn ON
+                # Turning ON
                 if desired_state and not current_state:
-                    # Check if minimum OFF time has passed
                     last_off = self.relay_off_times.get(relay, 0)
                     time_off = current_time - last_off
                     
-                    # Enforce minimum cooldown for heater and humidifier
-                    required_off_time = min_off
+                    # Enforce longer cooldown if we hit max runtime (stored in relay_off_times)
+                    required_cooldown = min_off
                     if relay in ['heater', 'humidifier']:
-                        required_off_time = max(min_off, MIN_COOLDOWN)
+                        last_on = self.relay_on_times.get(relay, 0)
+                        if last_on > 0 and (last_off - last_on) >= MAX_RUNTIME:
+                            required_cooldown = MIN_COOLDOWN
                     
-                    if time_off < required_off_time:
-                        # Too soon to turn back on
+                    if time_off < required_cooldown:
                         modified_actions[relay] = False
-                        cooldown_remaining = int(required_off_time - time_off)
-                        print(f"{relay.capitalize()} cooldown: {cooldown_remaining}s remaining")
+                        remaining = int(required_cooldown - time_off)
+                        print(f"{relay.capitalize()} cooldown: {remaining}s remaining")
                         continue
                     else:
-                        # OK to turn on, record the time and current sensor values
                         self.relay_on_times[relay] = current_time
-                        self.last_sensor_values[relay] = {
-                            'temperature': temperature,
-                            'humidity': humidity,
-                            'time': current_time
-                        }
                 
-                # Check if we want to turn OFF
+                # Turning OFF  
                 elif not desired_state and current_state:
-                    # Check if minimum ON time has passed
                     last_on = self.relay_on_times.get(relay, 0)
                     time_on = current_time - last_on
                     
-                    # Safety: Force off if max runtime exceeded for heater/humidifier
-                    if relay in ['heater', 'humidifier'] and time_on >= MAX_RUNTIME:
-                        modified_actions[relay] = False
-                        self.relay_off_times[relay] = current_time
-                        print(f"{relay.capitalize()} max runtime reached, forcing off for cooldown")
-                        continue
-                    
-                    # Allow immediate shutoff if target is reached or exceeded
-                    should_shutoff_immediately = False
-                    if relay == 'heater':
-                        # Shut off if at or above target
-                        should_shutoff_immediately = temperature >= self.target_temp
-                    elif relay == 'humidifier':
-                        # Shut off if at or above target
-                        should_shutoff_immediately = humidity >= self.target_humidity
-                    elif relay == 'dehumidifier':
-                        # Shut off if at or below target
-                        should_shutoff_immediately = humidity <= self.target_humidity
-                    
-                    if should_shutoff_immediately:
-                        # Target reached, allow immediate shutoff regardless of min_on time
-                        modified_actions[relay] = False
-                        self.relay_off_times[relay] = current_time
-                        print(f"{relay.capitalize()} target reached, shutting off immediately")
-                        continue
-                    
-                    # Check effectiveness - if not making progress, allow early shutoff
-                    is_effective = self.check_relay_effectiveness(relay, temperature, humidity)
-                    
-                    # If ineffective and ran for at least 10 minutes, allow shutoff
-                    if not is_effective and time_on >= 600:
-                        modified_actions[relay] = False
-                        self.relay_off_times[relay] = current_time
-                        # Force longer off time if ineffective (30 min)
-                        self.relay_off_times[relay] = current_time - min_off + 1800
-                        continue
-                    
-                    # Normal minimum on time check
                     if time_on < min_on:
-                        # Too soon to turn off, keep it on
                         modified_actions[relay] = True
                         continue
                     else:
-                        # OK to turn off, record the time
                         self.relay_off_times[relay] = current_time
-                
-                # Safety check: If relay is currently ON, check max runtime
-                elif current_state:
-                    last_on = self.relay_on_times.get(relay, 0)
-                    time_on = current_time - last_on
-                    
-                    # Force off if max runtime exceeded for heater/humidifier
-                    if relay in ['heater', 'humidifier'] and time_on >= MAX_RUNTIME:
-                        modified_actions[relay] = False
-                        self.relay_off_times[relay] = current_time
-                        print(f"{relay.capitalize()} safety limit: max runtime exceeded, forcing off")
             
+            # Apply the relay states
             success = self.board.control_climate(
                 humidifier=modified_actions['humidifier'],
                 dehumidifier=modified_actions['dehumidifier'],
                 heater=modified_actions['heater']
             )
             
-            # Log actions to database ONLY if state changed
+            # Log state changes
             if success:
                 for relay, state in modified_actions.items():
-                    # Only log if this is a state change
                     if self.last_relay_states.get(relay) != state:
                         self.db.log_relay_change(relay, state, mode='auto')
                         self.last_relay_states[relay] = state
@@ -450,7 +327,6 @@ class ClimateController:
         """Single control cycle - read sensors and apply control"""
         try:
             # Get current sensor data
-            print("[DEBUG] Control cycle executing...")
             data = self.board.get_climate_data()
             
             if not data or data.get('temperature') is None or data.get('humidity') is None:
@@ -463,15 +339,9 @@ class ClimateController:
             # Calculate required actions
             actions = self.calculate_control_actions(temperature, humidity)
             
-            # Apply actions (with rate limiting), pass sensor data to avoid re-fetching
-            current_time = time.time()
-            if current_time - self.last_action_time >= self.min_action_interval:
-                success = self.apply_control_actions(actions, temperature, humidity)
-                if success:
-                    self.last_action_time = current_time
-                return success
-            
-            return True
+            # Apply actions with timing protection
+            success = self.apply_control_actions(actions, temperature, humidity)
+            return success
         
         except Exception as e:
             print(f"Error in control cycle: {e}")
@@ -479,7 +349,7 @@ class ClimateController:
     
     def control_loop(self):
         """Main control loop (runs in separate thread)"""
-        print("Climate controller started")
+        print("Climate controller started (simple mode - no ML)")
         
         # Initialize relay_on_times for any relays that are already ON
         try:
@@ -487,47 +357,29 @@ class ClimateController:
             current_time = time.time()
             for relay in ['humidifier', 'dehumidifier', 'heater']:
                 if current_states.get(relay, False):
-                    # Relay is already ON, set start time to now to track from this point
+                    # Relay is ON, set start time to now
                     self.relay_on_times[relay] = current_time
-                    print(f"{relay.capitalize()} was already ON at startup, tracking from now")
+                    print(f"{relay.capitalize()} was already ON at startup")
         except Exception as e:
-            print(f"Error initializing relay states: {e}")
-        
-        # Train ML models on startup if available and not trained
-        if self.ml_predictor and self.ml_predictor.temp_model is None:
-            print("Training ML models on startup...")
-            try:
-                self.ml_predictor.train_models()
-            except Exception as e:
-                print(f"Initial ML training failed: {e}")
+            print(f"Error checking initial relay states: {e}")
         
         while self.running:
             try:
-                print(f"[DEBUG] Loop iteration - enabled:{self.enabled}, running:{self.running}", flush=True)
                 if self.enabled:
                     # Reload settings periodically
                     self.load_settings()
                     
                     # Execute control cycle
                     self.control_cycle()
-                    
-                    # Check if ML models need retraining
-                    if self.ml_predictor and self.use_ml:
-                        if self.ml_predictor.should_retrain():
-                            print("Auto-retraining ML models for seasonal adaptation...")
-                            # Train in background thread to not block control
-                            threading.Thread(target=self.ml_predictor.train_models, daemon=True).start()
                 
                 # Sleep between cycles
-                print("[DEBUG] Sleeping 10 seconds...", flush=True)
                 time.sleep(10)  # Check every 10 seconds
-                print("[DEBUG] Woke from sleep, looping...", flush=True)
             
             except Exception as e:
-                print(f"Error in control loop: {e}", flush=True)
+                print(f"Error in control loop: {e}")
                 import traceback
                 traceback.print_exc()
-                time.sleep(30)  # Wait longer on error
+                time.sleep(30)
         
         print("Climate controller stopped")
     
