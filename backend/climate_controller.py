@@ -54,6 +54,15 @@ class ClimateController:
             'heater': None
         }
         
+        # Watchdog system for detecting stuck/crashed RP2040
+        self.last_valid_reading_time = time.time()
+        self.last_temp_value = None
+        self.stuck_reading_count = 0
+        self.emergency_shutdown_attempted = False
+        self.STALE_READING_TIMEOUT = 300  # 5 minutes without valid reading
+        self.STUCK_READING_THRESHOLD = 10  # 10 identical readings in a row
+        self.CRITICAL_TIMEOUT = 600  # 10 minutes - reboot Pi5 if still failing
+        
         # ML predictor - disabled for simplicity
         self.ml_predictor = None
         # ML features disabled - using simple reactive control only
@@ -331,10 +340,14 @@ class ClimateController:
             
             if not data or data.get('temperature') is None or data.get('humidity') is None:
                 print("Warning: Missing sensor data")
+                self.check_watchdog()  # Check if system is failing
                 return False
             
             temperature = data['temperature']
             humidity = data['humidity']
+            
+            # Update watchdog - check for stuck readings
+            self.update_watchdog(temperature, humidity)
             
             # Calculate required actions
             actions = self.calculate_control_actions(temperature, humidity)
@@ -346,6 +359,66 @@ class ClimateController:
         except Exception as e:
             print(f"Error in control cycle: {e}")
             return False
+    
+    def update_watchdog(self, temperature, humidity):
+        """Update watchdog timer - track if readings are stuck or stale"""
+        try:
+            # Check if temperature reading is identical to last reading
+            if self.last_temp_value is not None and abs(temperature - self.last_temp_value) < 0.01:
+                self.stuck_reading_count += 1
+                if self.stuck_reading_count >= self.STUCK_READING_THRESHOLD:
+                    print(f"⚠️ WARNING: Temperature stuck at {temperature}°C for {self.stuck_reading_count} readings")
+                    self.check_watchdog()
+            else:
+                # Reading changed, reset counters
+                self.stuck_reading_count = 0
+                self.last_valid_reading_time = time.time()
+                self.emergency_shutdown_attempted = False
+            
+            self.last_temp_value = temperature
+        except Exception as e:
+            print(f"Error in watchdog update: {e}")
+    
+    def check_watchdog(self):
+        """Check if sensor readings are stale - emergency shutdown if needed"""
+        try:
+            current_time = time.time()
+            time_since_valid = current_time - self.last_valid_reading_time
+            
+            # Critical failure - reboot Pi5 to power cycle RP2040
+            if time_since_valid > self.CRITICAL_TIMEOUT:
+                print(f"🚨 CRITICAL: No valid readings for {time_since_valid:.0f}s - REBOOTING PI5 TO RESET SYSTEM")
+                self.emergency_shutdown()
+                time.sleep(2)
+                # Reboot the Pi5 (which will power cycle USB and thus the RP2040)
+                import os
+                os.system('sudo reboot')
+                return
+            
+            # Emergency shutdown - turn off all relays
+            if time_since_valid > self.STALE_READING_TIMEOUT and not self.emergency_shutdown_attempted:
+                print(f"🚨 EMERGENCY: Stale readings for {time_since_valid:.0f}s - SHUTTING DOWN RELAYS")
+                self.emergency_shutdown()
+                self.emergency_shutdown_attempted = True
+            
+        except Exception as e:
+            print(f"Error in watchdog check: {e}")
+    
+    def emergency_shutdown(self):
+        """Emergency shutdown - force all relays OFF"""
+        try:
+            print("🚨 EMERGENCY SHUTDOWN - Turning off all climate relays")
+            self.board.control_climate(humidifier=False, dehumidifier=False, heater=False)
+            
+            # Update relay tracking
+            for relay in ['humidifier', 'dehumidifier', 'heater']:
+                if relay in self.relay_on_times:
+                    del self.relay_on_times[relay]
+                self.relay_off_times[relay] = time.time()
+            
+            print("✓ Emergency shutdown complete - all relays OFF")
+        except Exception as e:
+            print(f"✗ CRITICAL ERROR in emergency shutdown: {e}")
     
     def control_loop(self):
         """Main control loop (runs in separate thread)"""

@@ -464,12 +464,37 @@
                             const tempF = Math.round(period.temperature * 9/5 + 32);
                             addTempPeriod(period.time, tempF);
                         });
+                        // Update the schedule display
+                        updateTempScheduleDisplay(periods, enabled);
                     } else {
                         // Add one default period (75°F)
                         addTempPeriod('06:00', 75);
+                        updateTempScheduleDisplay([], enabled);
                     }
                 })
                 .catch(error => console.error('Error loading temp schedule:', error));
+        }
+
+        function updateTempScheduleDisplay(periods, enabled) {
+            const display = document.getElementById('tempScheduleDisplay');
+            if (!display) return;
+            
+            if (!enabled || periods.length === 0) {
+                display.innerHTML = '<em>No schedule set - using manual target</em>';
+                return;
+            }
+            
+            // Sort periods by time
+            const sortedPeriods = periods.slice().sort((a, b) => a.time.localeCompare(b.time));
+            
+            let html = '<strong>Schedule:</strong><br>';
+            sortedPeriods.forEach((period, index) => {
+                const tempF = Math.round(period.temperature * 9/5 + 32);
+                const nextTime = index < sortedPeriods.length - 1 ? sortedPeriods[index + 1].time : sortedPeriods[0].time;
+                html += `${period.time}-${nextTime}: ${tempF}°F &nbsp;&nbsp;`;
+            });
+            
+            display.innerHTML = html;
         }
 
         function addTempPeriod(time = '', temp = '') {
@@ -867,18 +892,24 @@
 
                     <div class="target-row" style="margin-top: 20px;">
                         <span class="target-label">Current Target Temp: <strong id="targetTempDisplay">--°F</strong></span>
-                        <div style="font-size: 0.85em; color: #666; margin-top: 5px;">Use Temperature Schedule below to set targets</div>
+                        <div id="tempScheduleDisplay" style="font-size: 0.85em; color: #666; margin-top: 8px; line-height: 1.6;">
+                            <!-- Schedule will be displayed here -->
+                        </div>
                     </div>
                 </div>
 
                 <!-- Light Schedule -->
                 <div class="schedule-section">
-                    <h3>💡 Light Schedule</h3>
-                    <div class="schedule-display" id="currentSchedule" style="padding: 10px; background: rgba(255,255,255,0.3); border-radius: 6px; margin-bottom: 15px; display: none;">
-                        <strong>Active Schedule:</strong><br>
-                        <span id="scheduleOnTime">--</span> to <span id="scheduleOffTime">--</span>
+                    <div class="section-header clickable" onclick="toggleSubSection('lightSchedule')" style="padding: 12px 15px; background: rgba(255,255,255,0.2); border-radius: 6px; margin-bottom: 10px;">
+                        <div class="section-title">💡 Light Schedule</div>
+                        <span class="expand-icon" id="lightScheduleIcon">▶</span>
                     </div>
-                    <div class="schedule-inputs">
+                    <div class="sub-section collapsed" id="lightScheduleContent">
+                        <div class="schedule-display" id="currentSchedule" style="padding: 10px; background: rgba(255,255,255,0.3); border-radius: 6px; margin-bottom: 15px; display: none;">
+                            <strong>Active Schedule:</strong><br>
+                            <span id="scheduleOnTime">--</span> to <span id="scheduleOffTime">--</span>
+                        </div>
+                        <div class="schedule-inputs">
                         <div class="schedule-row">
                             <label>Light Cycle:</label>
                             <select class="time-input" id="lightCycle" style="width: auto;">
@@ -895,13 +926,18 @@
                             <input type="time" class="time-input" id="lightOffTime" placeholder="">
                         </div>
                         <button class="btn btn-yellow" id="setScheduleBtn">Set Schedule</button>
+                        </div>
                     </div>
                 </div>
 
                 <!-- Temperature Schedule -->
-                <div class="schedule-section" style="margin-top: 30px;">
-                    <h3>🌡️ Temperature Schedule</h3>
-                    <div style="margin-bottom: 15px;">
+                <div class="schedule-section" style="margin-top: 20px;">
+                    <div class="section-header clickable" onclick="toggleSubSection('tempSchedule')" style="padding: 12px 15px; background: rgba(255,255,255,0.2); border-radius: 6px; margin-bottom: 10px;">
+                        <div class="section-title">🌡️ Temperature Schedule</div>
+                        <span class="expand-icon" id="tempScheduleIcon">▶</span>
+                    </div>
+                    <div class="sub-section collapsed" id="tempScheduleContent">
+                        <div style="margin-bottom: 15px;">
                         <label style="display: flex; align-items: center; gap: 8px;">
                             <input type="checkbox" id="tempScheduleEnabled" style="width: auto;">
                             <span>Enable Dynamic Temperature Schedule</span>
@@ -911,8 +947,9 @@
                     <div id="tempSchedulePeriods">
                         <!-- Periods will be added here dynamically -->
                     </div>
-                    <button class="btn btn-secondary" id="addPeriodBtn" style="margin-top: 10px;">+ Add Period</button>
-                    <button class="btn btn-orange" id="saveTempScheduleBtn" style="margin-top: 10px;">Save Temperature Schedule</button>
+                        <button class="btn btn-secondary" id="addPeriodBtn" style="margin-top: 10px;">+ Add Period</button>
+                        <button class="btn btn-orange" id="saveTempScheduleBtn" style="margin-top: 10px;">Save Temperature Schedule</button>
+                    </div>
                 </div>
             </div>
         </section>
