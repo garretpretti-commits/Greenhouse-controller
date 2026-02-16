@@ -84,6 +84,16 @@ class GreenhouseDB:
                 )
             ''')
             
+            # System crashes/watchdog events table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS system_crashes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp REAL NOT NULL,
+                    crash_type TEXT NOT NULL,
+                    description TEXT NOT NULL
+                )
+            ''')
+            
             # Plants table
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS plants (
@@ -412,6 +422,44 @@ class GreenhouseDB:
             cursor.execute('UPDATE plants SET archived = 1 WHERE id = ?', (plant_id,))
             conn.commit()
             conn.close()
+    
+    def log_system_crash(self, crash_type: str, description: str):
+        """Log a system crash or watchdog event"""
+        with self.lock:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                INSERT INTO system_crashes (timestamp, crash_type, description)
+                VALUES (?, ?, ?)
+            ''', (time.time(), crash_type, description))
+            
+            conn.commit()
+            conn.close()
+    
+    def get_system_crashes(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """Get recent system crashes"""
+        with self.lock:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                SELECT timestamp, crash_type, description
+                FROM system_crashes
+                ORDER BY timestamp DESC
+                LIMIT ?
+            ''', (limit,))
+            
+            crashes = []
+            for row in cursor.fetchall():
+                crashes.append({
+                    'timestamp': row[0],
+                    'crash_type': row[1],
+                    'description': row[2]
+                })
+            
+            conn.close()
+            return crashes
 
 
 # Initialize default settings

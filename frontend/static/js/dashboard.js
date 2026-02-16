@@ -583,3 +583,39 @@ async function updateCharts(hours = 24) {
         soilChart.update('none');
     }
 }
+
+// Load crash log
+async function loadCrashLog() {
+    try {
+        const response = await fetch(`${API_BASE}/api/system/crashes?limit=20`);
+        const crashes = await response.json();
+        
+        const container = document.getElementById('crashLogContainer');
+        
+        if (crashes.length === 0) {
+            container.innerHTML = '<div style="color: #4CAF50;">✓ No crashes detected - system healthy</div>';
+            return;
+        }
+        
+        let html = '';
+        crashes.forEach(crash => {
+            const date = new Date(crash.timestamp * 1000);
+            const dateStr = date.toLocaleString();
+            const type = crash.crash_type === 'critical_reboot' ? '🔴 REBOOT' : '⚠️ SHUTDOWN';
+            html += `<div style="margin-bottom: 8px; padding: 8px; background: rgba(255,0,0,0.1); border-left: 3px solid #f44336; border-radius: 4px;">
+                <div style="color: #f44336; font-weight: bold;">${type} - ${dateStr}</div>
+                <div style="color: #ddd; margin-top: 4px;">${crash.description}</div>
+            </div>`;
+        });
+        
+        container.innerHTML = html;
+    } catch (error) {
+        console.error('Error loading crash log:', error);
+        document.getElementById('crashLogContainer').innerHTML = '<div style="color: #f44336;">Error loading crash log</div>';
+    }
+}
+
+// Load crash log on startup
+document.addEventListener('DOMContentLoaded', () => {
+    setTimeout(() => loadCrashLog(), 1000);
+});

@@ -630,6 +630,16 @@ def api_archive_plant(plant_id):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/system/crashes', methods=['GET'])
+def api_get_crashes():
+    """Get recent system crashes/watchdog events"""
+    try:
+        limit = request.args.get('limit', 50, type=int)
+        crashes = db.get_system_crashes(limit)
+        return jsonify(crashes)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 # ============= STARTUP =============
 
 if __name__ == '__main__':

@@ -61,7 +61,7 @@ class ClimateController:
         self.emergency_shutdown_attempted = False
         self.STALE_READING_TIMEOUT = 300  # 5 minutes without valid reading
         self.STUCK_READING_THRESHOLD = 10  # 10 identical readings in a row
-        self.CRITICAL_TIMEOUT = 600  # 10 minutes - reboot Pi5 if still failing
+        self.CRITICAL_TIMEOUT = 300  # 5 minutes - reboot Pi5 if still failing
         
         # ML predictor - disabled for simplicity
         self.ml_predictor = None
@@ -389,6 +389,8 @@ class ClimateController:
             if time_since_valid > self.CRITICAL_TIMEOUT:
                 print(f"🚨 CRITICAL: No valid readings for {time_since_valid:.0f}s - REBOOTING PI5 TO RESET SYSTEM")
                 self.emergency_shutdown()
+                # Log reboot to database
+                self.db.log_system_crash('critical_reboot', f'System reboot triggered after {time_since_valid:.0f}s of sensor failure')
                 time.sleep(2)
                 # Reboot the Pi5 (which will power cycle USB and thus the RP2040)
                 import os
@@ -415,6 +417,10 @@ class ClimateController:
                 if relay in self.relay_on_times:
                     del self.relay_on_times[relay]
                 self.relay_off_times[relay] = time.time()
+            
+            # Log crash to database
+            time_since_valid = time.time() - self.last_valid_reading_time
+            self.db.log_system_crash('sensor_failure', f'No valid sensor readings for {time_since_valid:.0f}s')
             
             print("✓ Emergency shutdown complete - all relays OFF")
         except Exception as e:
