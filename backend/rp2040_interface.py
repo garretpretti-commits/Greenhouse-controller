@@ -189,11 +189,10 @@ class Board1Controller:
     
     def control_climate(self, humidifier: bool, dehumidifier: bool, heater: bool) -> bool:
         """Control climate devices"""
-        success = True
-        success &= self.board.set_relay('humidifier', humidifier)
-        success &= self.board.set_relay('dehumidifier', dehumidifier)
-        success &= self.board.set_relay('heater', heater)
-        return success
+        result1 = self.board.set_relay('humidifier', humidifier)
+        result2 = self.board.set_relay('dehumidifier', dehumidifier)
+        result3 = self.board.set_relay('heater', heater)
+        return result1 and result2 and result3
     
     def control_light(self, state: bool) -> bool:
         """Control grow light"""
