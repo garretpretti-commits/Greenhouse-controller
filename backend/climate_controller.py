@@ -59,9 +59,9 @@ class ClimateController:
         self.last_temp_value = None
         self.stuck_reading_count = 0
         self.emergency_shutdown_attempted = False
-        self.STALE_READING_TIMEOUT = 300  # 5 minutes without valid reading
+        self.reconnection_attempted = False
+        self.WATCHDOG_TIMEOUT = 600  # 10 minutes - check RP2040 and decide
         self.STUCK_READING_THRESHOLD = 10  # 10 identical readings in a row
-        self.CRITICAL_TIMEOUT = 300  # 5 minutes - reboot Pi5 if still failing
         
         # ML predictor - disabled for simplicity
         self.ml_predictor = None
@@ -374,6 +374,7 @@ class ClimateController:
                 self.stuck_reading_count = 0
                 self.last_valid_reading_time = time.time()
                 self.emergency_shutdown_attempted = False
+                self.reconnection_attempted = False
             
             self.last_temp_value = temperature
         except Exception as e:
@@ -385,23 +386,34 @@ class ClimateController:
             current_time = time.time()
             time_since_valid = current_time - self.last_valid_reading_time
             
-            # Critical failure - reboot Pi5 to power cycle RP2040
-            if time_since_valid > self.CRITICAL_TIMEOUT:
-                print(f"🚨 CRITICAL: No valid readings for {time_since_valid:.0f}s - REBOOTING PI5 TO RESET SYSTEM")
-                self.emergency_shutdown()
-                # Log reboot to database
-                self.db.log_system_crash('critical_reboot', f'System reboot triggered after {time_since_valid:.0f}s of sensor failure')
-                time.sleep(2)
-                # Reboot the Pi5 (which will power cycle USB and thus the RP2040)
-                import os
-                os.system('sudo reboot')
-                return
-            
-            # Emergency shutdown - turn off all relays
-            if time_since_valid > self.STALE_READING_TIMEOUT and not self.emergency_shutdown_attempted:
-                print(f"🚨 EMERGENCY: Stale readings for {time_since_valid:.0f}s - SHUTTING DOWN RELAYS")
-                self.emergency_shutdown()
-                self.emergency_shutdown_attempted = True
+            # After 10 minutes, check if RP2040 is responding
+            if time_since_valid > self.WATCHDOG_TIMEOUT and not self.reconnection_attempted:
+                print(f"🚨 WARNING: No valid sensor readings for {time_since_valid:.0f}s - CHECKING RP2040")
+                self.reconnection_attempted = True
+                
+                try:
+                    # Try to ping the RP2040 with a simple relay state query
+                    states = self.board.get_relay_states()
+                    if states is not None:
+                        print("✓ RP2040 responding to commands - DHT22 sensor likely faulty")
+                        print("🚨 EMERGENCY SHUTDOWN - Turning off relays for safety")
+                        self.emergency_shutdown()
+                        self.db.log_system_crash('sensor_failure', f'DHT22 sensor failed after {time_since_valid:.0f}s - relays shut down')
+                        # Don't reboot, just keep relays off
+                    else:
+                        print("❌ RP2040 NOT RESPONDING - IMMEDIATE REBOOT")
+                        self.emergency_shutdown()
+                        self.db.log_system_crash('critical_reboot', f'RP2040 unresponsive after {time_since_valid:.0f}s - rebooting Pi5')
+                        time.sleep(2)
+                        import os
+                        os.system('sudo reboot')
+                except Exception as e:
+                    print(f"❌ RP2040 ping failed: {e} - IMMEDIATE REBOOT")
+                    self.emergency_shutdown()
+                    self.db.log_system_crash('critical_reboot', f'RP2040 error after {time_since_valid:.0f}s - rebooting Pi5')
+                    time.sleep(2)
+                    import os
+                    os.system('sudo reboot')
             
         except Exception as e:
             print(f"Error in watchdog check: {e}")
