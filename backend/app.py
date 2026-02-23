@@ -7,6 +7,9 @@ from flask import Flask, jsonify, request, render_template, send_from_directory
 from flask_cors import CORS
 import time
 import threading
+import signal
+import sys
+import atexit
 from datetime import datetime
 from rp2040_interface import Board1Controller
 from database import GreenhouseDB, init_default_settings
@@ -640,6 +643,40 @@ def api_get_crashes():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+# ============= SHUTDOWN HANDLER =============
+
+def shutdown_handler(signum=None, frame=None):
+    """Shutdown handler - turn off all relays before exit"""
+    print("\n🚨 Shutdown signal received - turning off all relays...")
+    
+    try:
+        # Turn off all climate relays
+        if board1 and system_status.get('board1_connected'):
+            board1.control_climate(humidifier=False, dehumidifier=False, heater=False)
+            board1.control_light(False)
+            print("✓ All relays turned OFF")
+        
+        # Stop controllers
+        if climate_controller:
+            climate_controller.shutdown()
+        if light_scheduler:
+            light_scheduler.shutdown()
+        if board1:
+            board1.disconnect()
+        
+        print("✓ Shutdown complete")
+    except Exception as e:
+        print(f"Error during shutdown: {e}")
+    
+    # Exit if called by signal
+    if signum is not None:
+        sys.exit(0)
+
+# Register shutdown handlers
+signal.signal(signal.SIGTERM, shutdown_handler)  # systemctl stop
+signal.signal(signal.SIGINT, shutdown_handler)   # Ctrl+C
+atexit.register(shutdown_handler)  # Any exit
+
 # ============= STARTUP =============
 
 if __name__ == '__main__':
@@ -663,11 +700,4 @@ if __name__ == '__main__':
     except KeyboardInterrupt:
         print("\n\nShutting down...")
     finally:
-        # Cleanup
-        if climate_controller:
-            climate_controller.shutdown()
-        if light_scheduler:
-            light_scheduler.shutdown()
-        if board1:
-            board1.disconnect()
-        print("Shutdown complete")
+        shutdown_handler()
